@@ -155,7 +155,6 @@ class TestVotingCompletion:
     @pytest.fixture
     def settings(self) -> Settings:
         return Settings(
-            trio_models="model1,model2,model3",
             trio_backend_url="http://test-backend:4000",
         )
 
@@ -288,7 +287,6 @@ class TestGenerateResponses:
     @pytest.fixture
     def settings(self) -> Settings:
         return Settings(
-            trio_models="model1,model2",
             trio_backend_url="http://test-backend:4000",
         )
 
@@ -390,7 +388,6 @@ class TestRunAcceptanceVoting:
     @pytest.fixture
     def settings(self) -> Settings:
         return Settings(
-            trio_models="model1,model2",
             trio_backend_url="http://test-backend:4000",
         )
 

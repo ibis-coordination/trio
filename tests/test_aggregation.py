@@ -53,7 +53,6 @@ class TestAggregateAcceptance:
     @pytest.fixture
     def settings(self) -> Settings:
         return Settings(
-            trio_models="model1,model2",
             trio_backend_url="http://test-backend:4000",
         )
 
@@ -93,7 +92,6 @@ class TestAggregateJudge:
     @pytest.fixture
     def settings(self) -> Settings:
         return Settings(
-            trio_models="model1,model2",
             trio_backend_url="http://test-backend:4000",
         )
 
@@ -175,7 +173,6 @@ class TestAggregateSynthesize:
     @pytest.fixture
     def settings(self) -> Settings:
         return Settings(
-            trio_models="model1,model2",
             trio_backend_url="http://test-backend:4000",
         )
 
@@ -232,7 +229,6 @@ class TestAggregateDispatcher:
     @pytest.fixture
     def settings(self) -> Settings:
         return Settings(
-            trio_models="model1,model2",
             trio_backend_url="http://test-backend:4000",
         )
 

@@ -17,11 +17,32 @@ class ChatMessage(BaseModel):
     content: str
 
 
-class EnsembleMember(BaseModel):
-    """A model in the ensemble with optional custom system prompt."""
+class EnsembleModel(BaseModel):
+    """Ensemble definition - the ensemble IS the model.
 
-    model: str
+    Defines a set of models to query in parallel with an aggregation method
+    to select or synthesize the final response.
+    """
+
+    ensemble: list["EnsembleMember"]
+    aggregation_method: AggregationMethod
+    judge_model: str | None = None
+    synthesize_model: str | None = None
+
+
+class EnsembleMember(BaseModel):
+    """A model in the ensemble with optional custom system prompt.
+
+    The model can be either a string (backend model name) or a nested
+    EnsembleModel for recursive composition.
+    """
+
+    model: str | EnsembleModel
     system_prompt: str | None = None
+
+
+# Rebuild models to resolve forward references
+EnsembleModel.model_rebuild()
 
 
 class ChatCompletionRequest(BaseModel):
@@ -31,19 +52,11 @@ class ChatCompletionRequest(BaseModel):
     user) are not supported as they don't apply to ensemble voting.
     """
 
-    model: str = "trio"
+    model: str | EnsembleModel
     messages: list[ChatMessage]
     max_tokens: int = 500
     temperature: float = 0.7
     stream: bool = False  # Not supported, returns 501
-    # Trio-specific: specify ensemble members with optional per-model system prompts
-    trio_ensemble: list[EnsembleMember] | None = None
-    # Trio-specific: aggregation method
-    trio_aggregation_method: AggregationMethod | None = None
-    # Trio-specific: model to use for judge aggregation
-    trio_judge_model: str | None = None
-    # Trio-specific: model to use for synthesize aggregation
-    trio_synthesize_model: str | None = None
 
 
 class ChatCompletionChoice(BaseModel):

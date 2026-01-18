@@ -2,64 +2,111 @@
 
 <img src="trio-logo.svg" width="200px">
 
-**Trio** is an AI ensemble system that allows clients to interact with the ensemble as a singular model through an OpenAI-compatible API.
+**Trio** is an AI ensemble system where **the ensemble is the model**. Instead of calling a single LLM, you define a pipeline of models and an aggregation strategy—and Trio executes it as if it were one model, returning a single response in OpenAI-compatible format.
 
-Because Trio uses multiple models, it is slower and more expensive to run than a single model, but the benefit is more consistent quality output. This is a good tradeoff for use cases where consistent quality is more important than speed or cost.
+## The Core Idea
 
-## Recursion
+In a typical LLM API call, the `model` parameter is a string like `"gpt-4o"` or `"claude-sonnet"`. In Trio, the `model` parameter can also be an **object** that defines an entire ensemble pipeline:
 
-Because Trio acts as a singular model from the client perspective, Trio can actually use other Trio instances as internal models in a recursive loop. This does multiply the cost and latency considerably, but this architecture enables hierarchical consensus: each sub-Trio reaches its own consensus, and then the top-level Trio selects among those consensus responses. This amplifies diversity (N Trio instances with M models each means N×M perspectives) and allows specialization, where different Trio instances can be tuned for different purposes (e.g., one optimized for creativity, another for factual accuracy, another for technical depth).
+```json
+{
+  "model": {
+    "ensemble": [
+      {"model": "gpt-4o"},
+      {"model": "claude-sonnet"},
+      {"model": "mistral-large"}
+    ],
+    "aggregation_method": "acceptance_voting"
+  },
+  "messages": [{"role": "user", "content": "What is 2+2?"}]
+}
+```
 
-## How It Works
+This object is a declarative specification—a DSL for LLM pipelines. Trio interprets it and executes:
 
-1. **Generate**: Trio sends the prompt to N configured models in parallel
-2. **Aggregate**: Select the winning response using one of three methods:
-   - **acceptance_voting** (default): Each model votes on all responses, winner has most acceptances
-   - **random**: Randomly select one response
-   - **judge**: A separate judge model evaluates and picks the best response
-3. **Return**: The winning response is returned in OpenAI format
+1. **Map**: Fan out the prompt to all ensemble members in parallel
+2. **Reduce**: Aggregate responses using the specified method
+3. **Return**: Single response in standard OpenAI format
+
+The client doesn't need to know the internal complexity. From its perspective, it's just calling a model.
+
+## Why This Matters
+
+- **Consistent quality**: Multiple models catch each other's mistakes
+- **Recursive composition**: Ensemble members can themselves be ensembles (nested pipelines)
+- **Pass-through compatibility**: String model names bypass the ensemble and forward directly to the backend
+- **Single endpoint**: Use one API for both ensemble calls and direct model access
 
 ## Aggregation Methods
 
-Trio supports multiple methods for selecting the best response from the ensemble:
+The `aggregation_method` determines how Trio reduces N responses into one:
 
-### Acceptance Voting (default)
+| Method | Calls | Description |
+|--------|-------|-------------|
+| `acceptance_voting` | 2N | Each model votes on all responses; winner has most acceptances |
+| `random` | N | Randomly select one response |
+| `judge` | N+1 | A separate judge model picks the best |
+| `synthesize` | N+1 | A separate model synthesizes all responses into one |
 
-Each model evaluates all responses:
-- **ACCEPTED**: Responses that adequately answer the question
-- **PREFERRED**: The single best response from accepted ones
+### Acceptance Voting
 
-Winner is ranked by acceptance count DESC, then preference count DESC. This is the most thorough method but requires 2N model calls (N responses + N voting rounds).
+Each model evaluates all responses and marks them as:
+- **ACCEPTED**: Adequate answers to the question
+- **PREFERRED**: The single best response among accepted ones
 
-### Random Selection
+Winner is ranked by acceptance count, then preference count. Most thorough but slowest.
 
-Randomly selects one of the generated responses. Fast and cheap (only N model calls), useful for:
-- A/B testing different ensemble configurations
-- When you want diversity over consistency
-- Baseline comparisons against voting methods
+### Random
 
-### Judge Model
+Randomly selects one response. Fast and cheap—useful for A/B testing ensemble configurations or when you want diversity over consistency.
 
-A separate "judge" model evaluates all responses and picks the best one. Requires N+1 model calls (N responses + 1 judge call). Good when:
-- You have a high-quality model available as judge
-- You want faster aggregation than acceptance voting
-- The judge model is different from the ensemble models
+### Judge
+
+A separate "judge" model evaluates all responses and picks the best. Good when you have a high-quality model available that's different from the ensemble members.
+
+### Synthesize
+
+A separate model reads all responses and synthesizes them into a single combined answer. Unlike the other methods which select a winner, this creates new content that draws from all responses.
 
 ## Pass-Through Mode
 
-Trio also acts as a unified gateway. If you specify a non-trio model name (e.g., `"model": "mistral"`), Trio bypasses ensemble voting and forwards the request directly to that model via the backend. This lets clients use a single endpoint for both ensemble voting and direct model access.
+If `model` is a string (e.g., `"mistral"`), Trio bypasses the ensemble and forwards directly to the backend. This lets you use a single endpoint for both ensemble and direct model access:
 
 ```bash
-# Ensemble voting (uses trio-1.0)
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "trio-1.0", "messages": [{"role": "user", "content": "Hello!"}]}'
-
-# Pass-through to specific model (no voting)
+# Direct model call (no ensemble)
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "mistral", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
+
+## Recursive Composition
+
+Because an ensemble behaves like a model, ensemble members can themselves be ensembles. This enables hierarchical pipelines:
+
+```json
+{
+  "model": {
+    "ensemble": [
+      {"model": "gpt-4o"},
+      {
+        "model": {
+          "ensemble": [{"model": "claude-sonnet"}, {"model": "claude-haiku"}],
+          "aggregation_method": "random"
+        }
+      }
+    ],
+    "aggregation_method": "acceptance_voting"
+  },
+  "messages": [{"role": "user", "content": "Hello!"}]
+}
+```
+
+Here the outer ensemble has two members: `gpt-4o` and a nested ensemble. The nested ensemble runs first (randomly selecting between Claude models), then its output competes with GPT-4o's response in the outer acceptance voting round.
+
+This multiplies cost and latency but enables:
+- **Hierarchical consensus**: Sub-ensembles reach their own consensus before the top-level aggregation
+- **Diversity amplification**: N ensembles × M models = N×M perspectives
+- **Specialization**: Different sub-ensembles tuned for different purposes (creativity, accuracy, etc.)
 
 ## Quick Start
 
@@ -82,7 +129,13 @@ curl http://localhost:8000/health
 # Make a completion request
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "trio-1.0", "messages": [{"role": "user", "content": "What is 2+2?"}]}'
+  -d '{
+    "model": {
+      "ensemble": [{"model": "llama3.2:1b"}, {"model": "llama3.2:3b"}, {"model": "mistral"}],
+      "aggregation_method": "acceptance_voting"
+    },
+    "messages": [{"role": "user", "content": "What is 2+2?"}]
+  }'
 ```
 
 ### Using Docker directly
@@ -92,7 +145,6 @@ If you already have a LiteLLM or OpenAI-compatible backend running:
 ```bash
 docker run -p 8000:8000 \
   -e TRIO_BACKEND_URL=http://your-backend:4000 \
-  -e TRIO_MODELS=model1,model2,model3 \
   ghcr.io/ibis-coordination/trio:latest
 ```
 
@@ -121,13 +173,15 @@ docker compose up -d
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "trio-1.0",
-    "messages": [{"role": "user", "content": "What is 2+2?"}],
-    "trio_ensemble": [
-      {"model": "claude-sonnet"},
-      {"model": "claude-haiku"},
-      {"model": "gpt-4o-mini"}
-    ]
+    "model": {
+      "ensemble": [
+        {"model": "claude-sonnet"},
+        {"model": "claude-haiku"},
+        {"model": "gpt-4o-mini"}
+      ],
+      "aggregation_method": "acceptance_voting"
+    },
+    "messages": [{"role": "user", "content": "What is 2+2?"}]
   }'
 ```
 
@@ -137,53 +191,72 @@ Available cloud models in the default config:
 
 You can mix local Ollama models with cloud models in the same ensemble.
 
-## API
+## API Reference
 
 ### POST /v1/chat/completions
 
-Standard OpenAI chat completions endpoint.
+OpenAI-compatible chat completions endpoint.
 
-**Request:**
+**Request Schema:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | `string \| EnsembleModel` | Model name (pass-through) or ensemble definition |
+| `messages` | `ChatMessage[]` | Conversation history |
+| `max_tokens` | `int` | Max tokens to generate (default: 500) |
+| `temperature` | `float` | Sampling temperature (default: 0.7) |
+
+**EnsembleModel Schema:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ensemble` | `EnsembleMember[]` | Yes | List of models to query |
+| `aggregation_method` | `string` | Yes | One of: `acceptance_voting`, `random`, `judge`, `synthesize` |
+| `judge_model` | `string` | If judge | Model to use as judge |
+| `synthesize_model` | `string` | If synthesize | Model to synthesize responses |
+
+**EnsembleMember Schema:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `model` | `string \| EnsembleModel` | Yes | Model name or nested ensemble |
+| `system_prompt` | `string` | No | Custom system prompt for this member |
+
+**Example with custom system prompts:**
 ```json
 {
-  "model": "trio-1.0",
-  "messages": [
-    {"role": "user", "content": "What is 2+2?"}
-  ],
-  "max_tokens": 500,
-  "temperature": 0.7
+  "model": {
+    "ensemble": [
+      {"model": "llama3.2:1b", "system_prompt": "You are concise and direct."},
+      {"model": "mistral", "system_prompt": "You are detailed and thorough."}
+    ],
+    "aggregation_method": "acceptance_voting"
+  },
+  "messages": [{"role": "user", "content": "Explain quantum computing"}]
 }
 ```
 
-If no `trio_ensemble` is specified, Trio uses the default models from the `TRIO_MODELS` environment variable.
-
-**With custom ensemble (`trio_ensemble`):**
+**Example with judge:**
 ```json
 {
-  "model": "trio-1.0",
-  "messages": [
-    {"role": "user", "content": "Explain quantum computing"}
-  ],
-  "trio_ensemble": [
-    {"model": "llama3.2:1b", "system_prompt": "You are concise and direct. Keep answers brief."},
-    {"model": "llama3.2:3b", "system_prompt": "You are detailed and thorough. Provide comprehensive explanations."},
-    {"model": "mistral", "system_prompt": "You are creative and use analogies to explain complex topics."}
-  ]
+  "model": {
+    "ensemble": [{"model": "llama3.2:1b"}, {"model": "mistral"}],
+    "aggregation_method": "judge",
+    "judge_model": "claude-sonnet"
+  },
+  "messages": [{"role": "user", "content": "Explain quantum computing"}]
 }
 ```
 
-The `trio_ensemble` field gives full control over the ensemble. Each member has:
-- `model` (required): The model name
-- `system_prompt` (optional): Custom system prompt for this model
-
-If you just want to specify models without custom prompts, omit `system_prompt`:
+**Example with synthesize:**
 ```json
 {
-  "trio_ensemble": [
-    {"model": "llama3.2:1b"},
-    {"model": "mistral"},
-    {"model": "codellama"}
-  ]
+  "model": {
+    "ensemble": [{"model": "llama3.2:1b"}, {"model": "mistral"}],
+    "aggregation_method": "synthesize",
+    "synthesize_model": "gpt-4o"
+  },
+  "messages": [{"role": "user", "content": "Explain quantum computing"}]
 }
 ```
 
@@ -211,35 +284,10 @@ The response includes a custom header with aggregation details:
   "winner_index": 0,
   "aggregation_method": "acceptance_voting",
   "candidates": [
-    {"model": "default", "response": "4", "accepted": 3, "preferred": 2},
-    {"model": "llama3.2-3b", "response": "The answer is 4.", "accepted": 3, "preferred": 1},
+    {"model": "llama3.2:1b", "response": "4", "accepted": 3, "preferred": 2},
+    {"model": "llama3.2:3b", "response": "The answer is 4.", "accepted": 3, "preferred": 1},
     {"model": "mistral", "response": "2+2=4", "accepted": 2, "preferred": 0}
   ]
-}
-```
-
-**With aggregation method:**
-
-Use `trio_aggregation_method` to specify how to select the winner:
-
-```json
-{
-  "model": "trio-1.0",
-  "messages": [{"role": "user", "content": "What is 2+2?"}],
-  "trio_aggregation_method": "random"
-}
-```
-
-**With judge model:**
-
-When using `judge` aggregation, specify the judge model:
-
-```json
-{
-  "model": "trio-1.0",
-  "messages": [{"role": "user", "content": "Explain quantum computing"}],
-  "trio_aggregation_method": "judge",
-  "trio_judge_model": "claude-sonnet"
 }
 ```
 
@@ -257,61 +305,79 @@ Environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TRIO_MODELS` | Comma-separated model names | `default,llama3.2-3b,mistral` |
 | `TRIO_BACKEND_URL` | LiteLLM/Ollama URL | `http://litellm:4000` |
 | `TRIO_PORT` | Service port | `8000` |
 | `TRIO_TIMEOUT` | Request timeout (seconds) | `120` |
-| `TRIO_AGGREGATION_METHOD` | Default aggregation method | `acceptance_voting` |
-| `TRIO_JUDGE_MODEL` | Model for judge aggregation | (none) |
 
 ## Using with OpenAI Clients
 
-Trio is compatible with any OpenAI client. Just point it at Trio's URL:
+Trio is compatible with any OpenAI client. For pass-through mode (single model), use a string model name. For ensemble mode, the model must be passed as a dict/object directly in the request body.
 
-**Python:**
+**Python (pass-through):**
 ```python
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
 response = client.chat.completions.create(
-    model="trio-1.0",
+    model="mistral",
     messages=[{"role": "user", "content": "What is 2+2?"}]
 )
 print(response.choices[0].message.content)
 ```
 
-**curl:**
-```bash
-curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer unused" \
-  -d '{"model": "trio-1.0", "messages": [{"role": "user", "content": "Hello!"}]}'
+**Python (ensemble via httpx):**
+```python
+import httpx
+
+response = httpx.post(
+    "http://localhost:8000/v1/chat/completions",
+    json={
+        "model": {
+            "ensemble": [{"model": "llama3.2:1b"}, {"model": "mistral"}],
+            "aggregation_method": "acceptance_voting"
+        },
+        "messages": [{"role": "user", "content": "What is 2+2?"}]
+    }
+)
+print(response.json()["choices"][0]["message"]["content"])
 ```
 
-**With custom ensemble:**
+**curl (ensemble):**
 ```bash
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "trio-1.0",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "trio_ensemble": [{"model": "llama3.2:1b"}, {"model": "mistral"}, {"model": "codellama"}]
+    "model": {
+      "ensemble": [{"model": "llama3.2:1b"}, {"model": "mistral"}],
+      "aggregation_method": "acceptance_voting"
+    },
+    "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
 
 ## Architecture
 
 ```
-Client → Trio (port 8000) → LiteLLM (port 4000) → Ollama/Claude/OpenAI
-              ↓
-         Fan out to N models
-              ↓
-         Collect responses
-              ↓
-         Voting round (each model votes)
-              ↓
-         Return winner in OpenAI format
+                           ┌─────────────────────────────────────────┐
+                           │              Trio Server                │
+                           │                                         │
+Request ──► model: {...} ──┼──► Parse EnsembleModel                  │
+                           │         │                               │
+                           │         ▼                               │
+                           │    ┌─────────┐                          │
+                           │    │   MAP   │  Fan out to N models     │
+                           │    └────┬────┘                          │
+                           │         │                               │
+                           │    ┌────▼────┐                          │
+                           │    │ REDUCE  │  Aggregate responses     │
+                           │    └────┬────┘                          │
+                           │         │                               │
+                           └─────────┼───────────────────────────────┘
+                                     ▼
+                              OpenAI-format response
 ```
+
+Trio connects to any OpenAI-compatible backend (LiteLLM, Ollama, etc.) for the actual model calls.
 
 ## Development
 

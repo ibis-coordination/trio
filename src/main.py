@@ -14,6 +14,7 @@ from .models import (
     ChatCompletionResponse,
     ChatMessage,
     EnsembleMember,
+    EnsembleModel,
     ModelInfo,
     ModelListResponse,
 )
@@ -65,22 +66,17 @@ async def list_models() -> ModelListResponse:
     )
 
 
-def is_trio_model(model: str) -> bool:
-    """Check if the model name refers to Trio ensemble."""
-    return model == "trio" or model.startswith("trio-")
-
-
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, response: Response) -> ChatCompletionResponse:
     """Create a chat completion using voting ensemble (OpenAI-compatible).
 
     This endpoint is compatible with the OpenAI chat completions API.
 
-    If model is "trio" or "trio-1.0", generates responses from multiple models,
-    runs acceptance voting, and returns the winning response.
+    If model is an EnsembleModel object, generates responses from multiple models,
+    runs the specified aggregation method, and returns the winning response.
 
-    If model is any other value (e.g., "mistral"), passes through directly to
-    that model via the backend without ensemble voting.
+    If model is a string, passes through directly to that model via the backend
+    without ensemble voting.
 
     Voting details are included in the X-Trio-Details response header.
     """
@@ -90,17 +86,20 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
 
     settings = get_settings()
 
-    # Determine if this is a Trio ensemble request or pass-through
-    if is_trio_model(request.model):
-        # Trio ensemble mode
-        if request.trio_ensemble:
-            ensemble = request.trio_ensemble
-        else:
-            ensemble = [EnsembleMember(model=m) for m in settings.models]
+    # Determine if this is an ensemble request or pass-through
+    if isinstance(request.model, EnsembleModel):
+        # Ensemble mode: extract config from model object
+        ensemble = request.model.ensemble
+        aggregation_method = request.model.aggregation_method
+        judge_model = request.model.judge_model
+        synthesize_model = request.model.synthesize_model
         response_model = MODEL_ID
     else:
         # Pass-through mode: forward directly to the specified model
         ensemble = [EnsembleMember(model=request.model)]
+        aggregation_method = "random"  # Single model, aggregation is irrelevant
+        judge_model = None
+        synthesize_model = None
         response_model = request.model
 
     # Validate ensemble size
@@ -110,28 +109,23 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
             detail=f"Ensemble size {len(ensemble)} exceeds maximum of {MAX_ENSEMBLE_SIZE} models",
         )
 
-    # Determine aggregation method (request param overrides settings default)
-    aggregation_method = request.trio_aggregation_method or settings.trio_aggregation_method
-    judge_model = request.trio_judge_model or settings.trio_judge_model
-    synthesize_model = request.trio_synthesize_model or settings.trio_synthesize_model
-
     # Validate judge method has a judge_model
     if aggregation_method == "judge" and not judge_model:
         raise HTTPException(
             status_code=400,
-            detail="trio_judge_model is required when using 'judge' aggregation method",
+            detail="judge_model is required when using 'judge' aggregation method",
         )
 
     # Validate synthesize method has a synthesize_model
     if aggregation_method == "synthesize" and not synthesize_model:
         raise HTTPException(
             status_code=400,
-            detail="trio_synthesize_model is required when using 'synthesize' aggregation method",
+            detail="synthesize_model is required when using 'synthesize' aggregation method",
         )
 
     logger.info(
         f"Chat completion request: {len(request.messages)} messages, "
-        f"ensemble: {[e.model for e in ensemble]}, aggregation: {aggregation_method}"
+        f"ensemble size: {len(ensemble)}, aggregation: {aggregation_method}"
     )
 
     # Use httpx client with timeout

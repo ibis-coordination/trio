@@ -56,7 +56,10 @@ class TestChatCompletionsEndpoint:
             response = client.post(
                 "/v1/chat/completions",
                 json={
-                    "model": "trio",
+                    "model": {
+                        "ensemble": [{"model": "model1"}, {"model": "model2"}],
+                        "aggregation_method": "acceptance_voting",
+                    },
                     "messages": [{"role": "user", "content": "Hello"}],
                 },
             )
@@ -87,7 +90,10 @@ class TestChatCompletionsEndpoint:
             response = client.post(
                 "/v1/chat/completions",
                 json={
-                    "model": "trio",
+                    "model": {
+                        "ensemble": [{"model": "model1"}, {"model": "model2"}],
+                        "aggregation_method": "acceptance_voting",
+                    },
                     "messages": [{"role": "user", "content": "Hello"}],
                 },
             )
@@ -99,8 +105,8 @@ class TestChatCompletionsEndpoint:
             assert details["candidates"][0]["model"] == "model1"
             assert details["candidates"][0]["accepted"] == 2
 
-    def test_accepts_trio_ensemble_parameter(self, client: TestClient) -> None:
-        """Can specify models with custom prompts via trio_ensemble."""
+    def test_accepts_ensemble_with_custom_prompts(self, client: TestClient) -> None:
+        """Can specify models with custom prompts via ensemble."""
         with patch("src.main.voting_completion") as mock_voting:
             mock_voting.return_value = (
                 "Response",
@@ -110,12 +116,14 @@ class TestChatCompletionsEndpoint:
             response = client.post(
                 "/v1/chat/completions",
                 json={
-                    "model": "trio",
+                    "model": {
+                        "ensemble": [
+                            {"model": "model1", "system_prompt": "Be brief"},
+                            {"model": "model2", "system_prompt": "Be detailed"},
+                        ],
+                        "aggregation_method": "acceptance_voting",
+                    },
                     "messages": [{"role": "user", "content": "Hello"}],
-                    "trio_ensemble": [
-                        {"model": "model1", "system_prompt": "Be brief"},
-                        {"model": "model2", "system_prompt": "Be detailed"},
-                    ],
                 },
             )
 
@@ -133,7 +141,10 @@ class TestChatCompletionsEndpoint:
         response = client.post(
             "/v1/chat/completions",
             json={
-                "model": "trio",
+                "model": {
+                    "ensemble": [{"model": "model1"}],
+                    "aggregation_method": "random",
+                },
                 "messages": [{"invalid": "format"}],
             },
         )
@@ -144,7 +155,12 @@ class TestChatCompletionsEndpoint:
         """Messages field is required."""
         response = client.post(
             "/v1/chat/completions",
-            json={"model": "trio"},
+            json={
+                "model": {
+                    "ensemble": [{"model": "model1"}],
+                    "aggregation_method": "random",
+                },
+            },
         )
 
         assert response.status_code == 422
@@ -154,9 +170,11 @@ class TestChatCompletionsEndpoint:
         response = client.post(
             "/v1/chat/completions",
             json={
-                "model": "trio",
+                "model": {
+                    "ensemble": [{"model": f"model{i}"} for i in range(10)],  # 10 > MAX_ENSEMBLE_SIZE (9)
+                    "aggregation_method": "random",
+                },
                 "messages": [{"role": "user", "content": "Hello"}],
-                "trio_ensemble": [{"model": f"model{i}"} for i in range(10)],  # 10 > MAX_ENSEMBLE_SIZE (9)
             },
         )
 
@@ -175,16 +193,18 @@ class TestChatCompletionsEndpoint:
             response = client.post(
                 "/v1/chat/completions",
                 json={
-                    "model": "trio",
+                    "model": {
+                        "ensemble": [{"model": f"model{i}"} for i in range(9)],  # Exactly 9
+                        "aggregation_method": "random",
+                    },
                     "messages": [{"role": "user", "content": "Hello"}],
-                    "trio_ensemble": [{"model": f"model{i}"} for i in range(9)],  # Exactly 9
                 },
             )
 
             assert response.status_code == 200
 
-    def test_passthrough_mode_with_non_trio_model(self, client: TestClient) -> None:
-        """Non-trio model name triggers pass-through mode."""
+    def test_passthrough_mode_with_string_model(self, client: TestClient) -> None:
+        """String model name triggers pass-through mode."""
         with patch("src.main.voting_completion") as mock_voting:
             mock_voting.return_value = (
                 "Direct response",
@@ -212,56 +232,8 @@ class TestChatCompletionsEndpoint:
             assert len(ensemble) == 1
             assert ensemble[0].model == "mistral"
 
-    def test_passthrough_mode_ignores_trio_ensemble(self, client: TestClient) -> None:
-        """Pass-through mode ignores trio_ensemble parameter."""
-        with patch("src.main.voting_completion") as mock_voting:
-            mock_voting.return_value = (
-                "Direct response",
-                VotingDetails(winner_index=0, candidates=[]),
-            )
-
-            response = client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "llama3.2:3b",
-                    "messages": [{"role": "user", "content": "Hello"}],
-                    "trio_ensemble": [{"model": "ignored1"}, {"model": "ignored2"}],
-                },
-            )
-
-            assert response.status_code == 200
-            # Should use the model from request, not trio_ensemble
-            call_args = mock_voting.call_args
-            ensemble = call_args[0][3]
-            assert len(ensemble) == 1
-            assert ensemble[0].model == "llama3.2:3b"
-
-    def test_trio_versioned_model_uses_ensemble(self, client: TestClient) -> None:
-        """Model name 'trio-1.0' uses ensemble mode."""
-        with patch("src.main.voting_completion") as mock_voting:
-            mock_voting.return_value = (
-                "Ensemble response",
-                VotingDetails(winner_index=0, candidates=[]),
-            )
-
-            response = client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "trio-1.0",
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-            )
-
-            assert response.status_code == 200
-            data = response.json()
-            assert data["model"] == "trio-1.0"
-            # Should use default ensemble (multiple models)
-            call_args = mock_voting.call_args
-            ensemble = call_args[0][3]
-            assert len(ensemble) > 1  # Default ensemble has multiple models
-
     def test_aggregation_method_passed_through(self, client: TestClient) -> None:
-        """trio_aggregation_method parameter is passed to voting_completion."""
+        """aggregation_method from model is passed to voting_completion."""
         with patch("src.main.voting_completion") as mock_voting:
             mock_voting.return_value = (
                 "Response",
@@ -271,9 +243,11 @@ class TestChatCompletionsEndpoint:
             response = client.post(
                 "/v1/chat/completions",
                 json={
-                    "model": "trio",
+                    "model": {
+                        "ensemble": [{"model": "model1"}, {"model": "model2"}],
+                        "aggregation_method": "random",
+                    },
                     "messages": [{"role": "user", "content": "Hello"}],
-                    "trio_aggregation_method": "random",
                 },
             )
 
@@ -283,25 +257,55 @@ class TestChatCompletionsEndpoint:
             assert call_args[0][6] == "random"
 
     def test_judge_method_requires_judge_model(self, client: TestClient) -> None:
-        """Using 'judge' aggregation without trio_judge_model returns 400."""
+        """Using 'judge' aggregation without judge_model returns 400."""
         response = client.post(
             "/v1/chat/completions",
             json={
-                "model": "trio",
+                "model": {
+                    "ensemble": [{"model": "model1"}, {"model": "model2"}],
+                    "aggregation_method": "judge",
+                },
                 "messages": [{"role": "user", "content": "Hello"}],
-                "trio_aggregation_method": "judge",
             },
         )
 
         assert response.status_code == 400
-        assert "trio_judge_model" in response.json()["detail"]
+        assert "judge_model" in response.json()["detail"]
+
+    def test_judge_method_with_judge_model(self, client: TestClient) -> None:
+        """Using 'judge' aggregation with judge_model succeeds."""
+        with patch("src.main.voting_completion") as mock_voting:
+            mock_voting.return_value = (
+                "Response",
+                VotingDetails(winner_index=0, candidates=[], aggregation_method="judge"),
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": {
+                        "ensemble": [{"model": "model1"}, {"model": "model2"}],
+                        "aggregation_method": "judge",
+                        "judge_model": "gpt-4o",
+                    },
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+            )
+
+            assert response.status_code == 200
+            call_args = mock_voting.call_args
+            # judge_model is the 8th positional argument (index 7)
+            assert call_args[0][7] == "gpt-4o"
 
     def test_streaming_returns_501(self, client: TestClient) -> None:
         """Streaming requests return 501 Not Implemented."""
         response = client.post(
             "/v1/chat/completions",
             json={
-                "model": "trio",
+                "model": {
+                    "ensemble": [{"model": "model1"}],
+                    "aggregation_method": "random",
+                },
                 "messages": [{"role": "user", "content": "Hello"}],
                 "stream": True,
             },
@@ -315,10 +319,58 @@ class TestChatCompletionsEndpoint:
         response = client.post(
             "/v1/chat/completions",
             json={
-                "model": "trio",
+                "model": {
+                    "ensemble": [{"model": "model1"}],
+                    "aggregation_method": "invalid_method",
+                },
                 "messages": [{"role": "user", "content": "Hello"}],
-                "trio_aggregation_method": "invalid_method",
             },
         )
 
         assert response.status_code == 422
+
+    def test_requires_aggregation_method(self, client: TestClient) -> None:
+        """Ensemble model requires aggregation_method."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": {
+                    "ensemble": [{"model": "model1"}],
+                },
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        assert response.status_code == 422
+
+    def test_nested_ensemble(self, client: TestClient) -> None:
+        """Nested ensemble models are supported."""
+        with patch("src.main.voting_completion") as mock_voting:
+            mock_voting.return_value = (
+                "Response",
+                VotingDetails(winner_index=0, candidates=[]),
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": {
+                        "ensemble": [
+                            {"model": "gpt-4o"},
+                            {
+                                "model": {
+                                    "ensemble": [
+                                        {"model": "claude-3-opus"},
+                                        {"model": "claude-3-sonnet"},
+                                    ],
+                                    "aggregation_method": "random",
+                                }
+                            },
+                        ],
+                        "aggregation_method": "acceptance_voting",
+                    },
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+            )
+
+            assert response.status_code == 200

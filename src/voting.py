@@ -8,11 +8,71 @@ import httpx
 
 from .config import Settings
 from .llm import fetch_completion_simple
-from .models import Candidate, ChatMessage, EnsembleMember, VotingDetails
+from .models import AggregationMethod, Candidate, ChatMessage, EnsembleMember, EnsembleModel, VotingDetails
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 logger = logging.getLogger(__name__)
+
+
+async def _generate_single_response(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    messages: list[ChatMessage],
+    member: EnsembleMember,
+    max_tokens: int,
+    temperature: float,
+    default_system: str,
+) -> tuple[str, str | None]:
+    """Generate a response from a single ensemble member.
+
+    Handles both simple models (strings) and nested ensembles (EnsembleModel).
+
+    Returns:
+        Tuple of (model_name, response_text). response_text is None on failure.
+    """
+    if isinstance(member.model, EnsembleModel):
+        # Nested ensemble: recursively call voting_completion
+        nested = member.model
+        model_name = f"ensemble:{nested.aggregation_method}"
+
+        # Build messages with optional custom system prompt
+        nested_messages = list(messages)
+        if member.system_prompt:
+            # Replace or prepend system message
+            if nested_messages and nested_messages[0].role == "system":
+                nested_messages[0] = ChatMessage(role="system", content=member.system_prompt)
+            else:
+                nested_messages.insert(0, ChatMessage(role="system", content=member.system_prompt))
+
+        nested_response, _ = await voting_completion(
+            client,
+            settings,
+            nested_messages,
+            nested.ensemble,
+            max_tokens,
+            temperature,
+            nested.aggregation_method,
+            nested.judge_model,
+            nested.synthesize_model,
+        )
+        return model_name, nested_response
+    else:
+        # Simple model: call backend directly
+        model_name = member.model
+        system_prompt = member.system_prompt if member.system_prompt else default_system
+        user_message = messages[-1].content if messages else ""
+
+        response = await fetch_completion_simple(
+            client,
+            settings.trio_backend_url,
+            model_name,
+            system_prompt,
+            user_message,
+            max_tokens,
+            temperature,
+        )
+        return model_name, response
 
 
 async def generate_responses(
@@ -42,36 +102,22 @@ async def generate_responses(
     if messages and messages[0].role == "system":
         default_system = messages[0].content
 
-    # Extract the user message
-    user_message = messages[-1].content if messages else ""
-
-    tasks = []
-    models = []
-    for member in ensemble:
-        # Use member's custom system_prompt if provided, otherwise fall back to default
-        system_prompt = member.system_prompt if member.system_prompt else default_system
-        task = fetch_completion_simple(
-            client,
-            settings.trio_backend_url,
-            member.model,
-            system_prompt,
-            user_message,
-            max_tokens,
-            temperature,
+    # Create tasks for all ensemble members
+    tasks = [
+        _generate_single_response(
+            client, settings, messages, member, max_tokens, temperature, default_system
         )
-        tasks.append(task)
-        models.append(member.model)
+        for member in ensemble
+    ]
 
     # Run all tasks in parallel
-    responses = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks)
 
-    results = []
-    for model, response in zip(models, responses):
-        results.append((model, response))
+    for model, response in results:
         if response:
             logger.debug(f"  {model}: {response[:80]}...")
 
-    return results
+    return list(results)
 
 
 async def get_voter_votes(
@@ -247,23 +293,14 @@ async def voting_completion(
         logger.debug("Single model in ensemble, skipping voting")
         member = ensemble[0]
 
-        # Extract system prompt
+        # Extract default system prompt
         default_system = DEFAULT_SYSTEM_PROMPT
         if messages and messages[0].role == "system":
             default_system = messages[0].content
-        system_prompt = member.system_prompt if member.system_prompt else default_system
 
-        # Extract user message
-        user_message = messages[-1].content if messages else ""
-
-        response = await fetch_completion_simple(
-            client,
-            settings.trio_backend_url,
-            member.model,
-            system_prompt,
-            user_message,
-            max_tokens,
-            temperature,
+        # Generate response (handles both simple models and nested ensembles)
+        model_name, response = await _generate_single_response(
+            client, settings, messages, member, max_tokens, temperature, default_system
         )
 
         if not response:
@@ -273,7 +310,7 @@ async def voting_completion(
 
         return response, VotingDetails(
             winner_index=0,
-            candidates=[Candidate(model=member.model, response=response, accepted=0, preferred=0)],
+            candidates=[Candidate(model=model_name, response=response, accepted=0, preferred=0)],
             aggregation_method="none",
         )
 
