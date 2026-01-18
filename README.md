@@ -1,10 +1,10 @@
 # Trio
 
-Trio is an ensemble of AI models that operates as a singular unified model itself. You can prompt Trio just as you would with any other AI model, but under the hood Trio uses multiple models to arrive at a single response to each prompt.
+<img src="trio-logo.svg" width="200px">
+
+**Trio** is an AI ensemble system that allows clients to interact with the ensemble as a singular model through an OpenAI-compatible API.
 
 Because Trio uses multiple models, it is slower and more expensive to run than a single model, but the benefit is more consistent quality output. This is a good tradeoff for use cases where consistent quality is more important than speed or cost.
-
-Trio exposes an OpenAI-compatible API, so any client that can talk to OpenAI can use Trio as a drop-in replacement.
 
 ## Recursion
 

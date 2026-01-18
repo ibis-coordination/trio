@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trio Logo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #000;
+    }
+
+    .container {
+      text-align: center;
+    }
+
+    #logo-container {
+      margin-bottom: 2rem;
+    }
+
+    #logo-container canvas {
+      display: block;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 3rem;
+      font-weight: 300;
+      letter-spacing: 0.5em;
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
+    }
+
+    p {
+      color: #666;
+      font-size: 1rem;
+    }
+
+    .controls {
+      margin-top: 2rem;
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+    }
+
+    button {
+      padding: 0.5rem 1.5rem;
+      border: 1px solid #ccc;
+      background: transparent;
+      color: #000;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      transition: all 0.2s;
+    }
+
+    button:hover {
+      background: #f0f0f0;
+      border-color: #999;
+    }
+
+    button.active {
+      background: #e0e0e0;
+      border-color: #999;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="logo-container"></div>
+    <div class="controls">
+      <button id="toggle-animation" class="active">Pause</button>
+      <button id="reset-rotation">Reset</button>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+
+    /**
+     * TrefoilKnot curve - generates a proper 3D trefoil knot with Z-depth variation.
+     */
+    class TrefoilKnotCurve extends THREE.Curve {
+      constructor(scale = 1) {
+        super();
+        this.scale = scale;
+      }
+
+      getPoint(t, optionalTarget = new THREE.Vector3()) {
+        const angle = t * Math.PI * 2;
+        const x = Math.sin(angle) + 2 * Math.sin(2 * angle);
+        const y = Math.cos(angle) - 2 * Math.cos(2 * angle);
+        const z = -Math.sin(3 * angle);
+        return optionalTarget.set(x, y, z).multiplyScalar(this.scale);
+      }
+    }
+
+    /**
+     * Manages an animated 3D trefoil knot scene.
+     */
+    class TrefoilScene {
+      constructor(options = {}) {
+        const {
+          size = 200,
+          tubeRadius = 0.6,
+          color = "#ffffff",
+          outlineColor = "#000000",
+          outlineWidth = 0.3,
+          backgroundColor = "transparent",
+          rotationSpeed = 0.5,
+        } = options;
+
+        this.rotationSpeed = rotationSpeed;
+        this.isAnimating = false;
+
+        // Create scene
+        this.scene = new THREE.Scene();
+
+        // Create camera - orthographic for consistent sizing
+        const frustumSize = 14;
+        const aspect = 1;
+        this.camera = new THREE.OrthographicCamera(
+          (frustumSize * aspect) / -2,
+          (frustumSize * aspect) / 2,
+          frustumSize / 2,
+          frustumSize / -2,
+          0.1,
+          100
+        );
+        this.camera.position.z = 12;
+
+        // Create renderer
+        this.renderer = new THREE.WebGLRenderer({
+          antialias: true,
+          alpha: backgroundColor === "transparent",
+        });
+        this.renderer.setSize(size, size);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        if (backgroundColor !== "transparent") {
+          this.renderer.setClearColor(new THREE.Color(backgroundColor), 1);
+        }
+
+        // Create trefoil knot curve and geometry
+        const curve = new TrefoilKnotCurve(1.5);
+
+        // Black outline (slightly larger tube, back-faces only)
+        const outlineGeometry = new THREE.TubeGeometry(
+          curve,
+          200,
+          tubeRadius + outlineWidth,
+          32,
+          true
+        );
+        const outlineMaterial = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(outlineColor),
+          side: THREE.BackSide,
+        });
+
+        // White fill (front faces)
+        const geometry = new THREE.TubeGeometry(curve, 200, tubeRadius, 32, true);
+        const mainMaterial = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(color),
+        });
+
+        // Create group with meshes
+        this.group = new THREE.Group();
+        this.group.add(new THREE.Mesh(outlineGeometry, outlineMaterial));
+        this.group.add(new THREE.Mesh(geometry, mainMaterial));
+        this.scene.add(this.group);
+
+        // Set initial rotation
+        this.group.rotation.x = 0;
+        this.group.rotation.y = 0;
+
+        // Initial render
+        this.renderer.render(this.scene, this.camera);
+      }
+
+      get canvas() {
+        return this.renderer.domElement;
+      }
+
+      startAnimation() {
+        if (this.isAnimating) return;
+        this.isAnimating = true;
+
+        const animate = () => {
+          if (!this.isAnimating) return;
+          this.animationId = requestAnimationFrame(animate);
+
+          this.group.rotation.x += 0.003 * this.rotationSpeed;
+          this.group.rotation.y += 0.005 * this.rotationSpeed;
+
+          this.renderer.render(this.scene, this.camera);
+        };
+        animate();
+      }
+
+      stopAnimation() {
+        this.isAnimating = false;
+        if (this.animationId) {
+          cancelAnimationFrame(this.animationId);
+          this.animationId = null;
+        }
+      }
+
+      resetRotation() {
+        this.group.rotation.x = 0;
+        this.group.rotation.y = 0;
+        this.renderer.render(this.scene, this.camera);
+      }
+
+      dispose() {
+        this.stopAnimation();
+        this.group.traverse((object) => {
+          if (object instanceof THREE.Mesh) {
+            object.geometry.dispose();
+            if (object.material instanceof THREE.Material) {
+              object.material.dispose();
+            }
+          }
+        });
+        this.renderer.dispose();
+      }
+    }
+
+    // Initialize
+    const container = document.getElementById("logo-container");
+    const scene = new TrefoilScene({
+      size: 200,
+      tubeRadius: 0.6,
+      outlineWidth: 0.3,
+      color: "#ffffff",
+      outlineColor: "#000000",
+      rotationSpeed: 0.5,
+    });
+
+    container.appendChild(scene.canvas);
+    scene.startAnimation();
+
+    // Controls
+    const toggleBtn = document.getElementById("toggle-animation");
+    const resetBtn = document.getElementById("reset-rotation");
+
+    toggleBtn.addEventListener("click", () => {
+      if (scene.isAnimating) {
+        scene.stopAnimation();
+        toggleBtn.textContent = "Play";
+        toggleBtn.classList.remove("active");
+      } else {
+        scene.startAnimation();
+        toggleBtn.textContent = "Pause";
+        toggleBtn.classList.add("active");
+      }
+    });
+
+    resetBtn.addEventListener("click", () => {
+      scene.resetRotation();
+    });
+  </script>
+</body>
+</html>
