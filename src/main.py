@@ -113,12 +113,20 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
     # Determine aggregation method (request param overrides settings default)
     aggregation_method = request.trio_aggregation_method or settings.trio_aggregation_method
     judge_model = request.trio_judge_model or settings.trio_judge_model
+    synthesize_model = request.trio_synthesize_model or settings.trio_synthesize_model
 
     # Validate judge method has a judge_model
     if aggregation_method == "judge" and not judge_model:
         raise HTTPException(
             status_code=400,
             detail="trio_judge_model is required when using 'judge' aggregation method",
+        )
+
+    # Validate synthesize method has a synthesize_model
+    if aggregation_method == "synthesize" and not synthesize_model:
+        raise HTTPException(
+            status_code=400,
+            detail="trio_synthesize_model is required when using 'synthesize' aggregation method",
         )
 
     logger.info(
@@ -137,6 +145,7 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
             request.temperature,
             aggregation_method,
             judge_model,
+            synthesize_model,
         )
 
     # Build OpenAI-compatible response

@@ -26,11 +26,14 @@ class Settings(BaseSettings):
     # Timeout for each model request (seconds)
     trio_timeout: int = 120
 
-    # Aggregation method: "acceptance_voting", "random", or "judge"
+    # Aggregation method: "acceptance_voting", "random", "judge", or "synthesize"
     trio_aggregation_method: str = "acceptance_voting"
 
     # Model to use for judge aggregation (required if method is "judge")
     trio_judge_model: str | None = None
+
+    # Model to use for synthesize aggregation (required if method is "synthesize")
+    trio_synthesize_model: str | None = None
 
     @property
     def models(self) -> list[str]:

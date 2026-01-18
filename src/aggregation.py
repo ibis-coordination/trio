@@ -24,6 +24,8 @@ class AggregationResult:
     # Per-response metadata (acceptance/preference counts, etc.)
     acceptance_counts: list[int] = field(default_factory=list)
     preference_counts: list[int] = field(default_factory=list)
+    # For synthesize method: the combined response (winner_index will be -1)
+    synthesized_response: str | None = None
 
 
 async def aggregate_random(
@@ -182,7 +184,84 @@ Reply with just the number (1, 2, etc.) of the best response."""
     )
 
 
-AGGREGATION_METHODS = ["acceptance_voting", "random", "judge"]
+async def aggregate_synthesize(
+    responses: list[tuple[str, str]],
+    question: str,
+    synthesize_model: str,
+    client: httpx.AsyncClient,
+    settings: Settings,
+    **kwargs: Any,
+) -> AggregationResult:
+    """Synthesize multiple responses into a single combined response.
+
+    A model combines the best parts of all responses into one comprehensive answer.
+
+    Args:
+        responses: List of (model_name, response_text) tuples
+        question: The original user question
+        synthesize_model: Model name to use for synthesis
+        client: HTTP client for making LLM requests
+        settings: Application settings
+
+    Returns:
+        AggregationResult with synthesized_response (winner_index will be -1)
+    """
+    if not responses:
+        return AggregationResult(winner_index=-1, method="synthesize")
+
+    # Build the synthesis prompt
+    response_list = "\n\n---\n\n".join(
+        f"Response {i + 1} (from {model}):\n{resp}"
+        for i, (model, resp) in enumerate(responses)
+    )
+
+    synthesize_prompt = f"""A user asked: "{question}"
+
+Here are {len(responses)} responses from different models:
+
+{response_list}
+
+Synthesize these responses into a single, comprehensive answer that:
+- Combines the strongest points from each response
+- Resolves any contradictions by favoring the most accurate information
+- Maintains a clear, coherent structure
+
+Provide only the synthesized response, no preamble."""
+
+    logger.debug(f"Asking model {synthesize_model} to synthesize {len(responses)} responses")
+
+    result = await fetch_completion_simple(
+        client,
+        settings.trio_backend_url,
+        synthesize_model,
+        "You are synthesizing multiple responses into one comprehensive answer.",
+        synthesize_prompt,
+    )
+
+    if not result:
+        logger.warning(
+            f"Synthesize model {synthesize_model} returned empty response, "
+            "falling back to first response"
+        )
+        return AggregationResult(
+            winner_index=0,
+            method="synthesize",
+            acceptance_counts=[0] * len(responses),
+            preference_counts=[0] * len(responses),
+        )
+
+    logger.debug(f"Synthesized response: {result[:100]}...")
+
+    return AggregationResult(
+        winner_index=-1,  # Special marker: synthesized, not selected
+        method="synthesize",
+        acceptance_counts=[0] * len(responses),
+        preference_counts=[0] * len(responses),
+        synthesized_response=result,
+    )
+
+
+AGGREGATION_METHODS = ["acceptance_voting", "random", "judge", "synthesize"]
 
 
 async def aggregate(
@@ -192,22 +271,24 @@ async def aggregate(
     client: httpx.AsyncClient,
     settings: Settings,
     judge_model: str | None = None,
+    synthesize_model: str | None = None,
 ) -> AggregationResult:
     """Dispatch to the appropriate aggregation method.
 
     Args:
-        method: Aggregation method name ("acceptance_voting", "random", or "judge")
+        method: Aggregation method name
         responses: List of (model_name, response_text) tuples
         question: The original user question
         client: HTTP client for making LLM requests
         settings: Application settings
         judge_model: Model to use for judge aggregation (required if method is "judge")
+        synthesize_model: Model to use for synthesize aggregation (required if method is "synthesize")
 
     Returns:
         AggregationResult from the selected method
 
     Raises:
-        ValueError: If method is unknown or judge_model missing for judge method
+        ValueError: If method is unknown or required model parameter is missing
     """
     if method not in AGGREGATION_METHODS:
         raise ValueError(
@@ -222,6 +303,18 @@ async def aggregate(
             responses=responses,
             question=question,
             judge_model=judge_model,
+            client=client,
+            settings=settings,
+        )
+    elif method == "synthesize":
+        if not synthesize_model:
+            raise ValueError(
+                "synthesize_model is required when using 'synthesize' aggregation method"
+            )
+        return await aggregate_synthesize(
+            responses=responses,
+            question=question,
+            synthesize_model=synthesize_model,
             client=client,
             settings=settings,
         )

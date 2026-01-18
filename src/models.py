@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 # Valid aggregation methods for ensemble response selection
-AggregationMethod = Literal["acceptance_voting", "random", "judge"]
+AggregationMethod = Literal["acceptance_voting", "random", "judge", "synthesize"]
 
 
 class ChatMessage(BaseModel):
@@ -42,6 +42,8 @@ class ChatCompletionRequest(BaseModel):
     trio_aggregation_method: AggregationMethod | None = None
     # Trio-specific: model to use for judge aggregation
     trio_judge_model: str | None = None
+    # Trio-specific: model to use for synthesize aggregation
+    trio_synthesize_model: str | None = None
 
 
 class ChatCompletionChoice(BaseModel):

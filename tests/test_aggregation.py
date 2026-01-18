@@ -8,6 +8,7 @@ from src.aggregation import (
     aggregate_random,
     aggregate_acceptance,
     aggregate_judge,
+    aggregate_synthesize,
     AggregationResult,
     AGGREGATION_METHODS,
 )
@@ -164,6 +165,63 @@ class TestAggregateJudge:
         assert result.winner_index == -1
 
 
+class TestAggregateSynthesize:
+    """Tests for synthesize aggregation."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def settings(self) -> Settings:
+        return Settings(
+            trio_models="model1,model2",
+            trio_backend_url="http://test-backend:4000",
+        )
+
+    async def test_synthesizes_responses(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Synthesize method combines responses into one."""
+        with patch("src.aggregation.fetch_completion_simple") as mock_fetch:
+            mock_fetch.return_value = "This is the synthesized response."
+
+            responses = [("m1", "r1"), ("m2", "r2"), ("m3", "r3")]
+            result = await aggregate_synthesize(
+                responses, "question?", "synth-model", mock_client, settings
+            )
+
+            assert result.method == "synthesize"
+            assert result.winner_index == -1  # Synthesized, not selected
+            assert result.synthesized_response == "This is the synthesized response."
+
+    async def test_fallback_on_empty_response(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Falls back to first response when synthesis returns nothing."""
+        with patch("src.aggregation.fetch_completion_simple") as mock_fetch:
+            mock_fetch.return_value = None
+
+            responses = [("m1", "r1"), ("m2", "r2")]
+            result = await aggregate_synthesize(
+                responses, "question?", "synth-model", mock_client, settings
+            )
+
+            assert result.winner_index == 0  # Fallback to first
+            assert result.synthesized_response is None
+
+    async def test_empty_responses(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Empty responses returns -1."""
+        result = await aggregate_synthesize(
+            [], "question?", "synth-model", mock_client, settings
+        )
+
+        assert result.winner_index == -1
+        assert result.synthesized_response is None
+
+
 class TestAggregateDispatcher:
     """Tests for the aggregate() dispatcher function."""
 
@@ -235,6 +293,36 @@ class TestAggregateDispatcher:
                 "judge", [], "question?", mock_client, settings, None
             )
 
+    async def test_dispatches_to_synthesize(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Dispatches to synthesize aggregation."""
+        with patch("src.aggregation.fetch_completion_simple") as mock_fetch:
+            mock_fetch.return_value = "Synthesized answer"
+
+            responses = [("m1", "r1"), ("m2", "r2")]
+            result = await aggregate(
+                "synthesize",
+                responses,
+                "question?",
+                mock_client,
+                settings,
+                judge_model=None,
+                synthesize_model="synth-model",
+            )
+
+            assert result.method == "synthesize"
+            assert result.synthesized_response == "Synthesized answer"
+
+    async def test_raises_on_synthesize_without_model(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Raises ValueError when synthesize method lacks synthesize_model."""
+        with pytest.raises(ValueError, match="synthesize_model is required"):
+            await aggregate(
+                "synthesize", [], "question?", mock_client, settings, None, None
+            )
+
 
 class TestAggregationMethodRegistry:
     """Tests for the AGGREGATION_METHODS registry."""
@@ -244,7 +332,8 @@ class TestAggregationMethodRegistry:
         assert "acceptance_voting" in AGGREGATION_METHODS
         assert "random" in AGGREGATION_METHODS
         assert "judge" in AGGREGATION_METHODS
+        assert "synthesize" in AGGREGATION_METHODS
 
     def test_expected_method_count(self) -> None:
         """Registry has expected number of methods."""
-        assert len(AGGREGATION_METHODS) == 3
+        assert len(AGGREGATION_METHODS) == 4

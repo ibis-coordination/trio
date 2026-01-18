@@ -224,6 +224,7 @@ async def voting_completion(
     temperature: float = 0.7,
     aggregation_method: str = "acceptance_voting",
     judge_model: str | None = None,
+    synthesize_model: str | None = None,
 ) -> tuple[str, VotingDetails]:
     """Run the full voting completion pipeline.
 
@@ -234,8 +235,9 @@ async def voting_completion(
         ensemble: List of ensemble members with models and optional custom prompts
         max_tokens: Maximum tokens per response
         temperature: Sampling temperature
-        aggregation_method: Method for selecting winner ("acceptance_voting", "random", "judge")
+        aggregation_method: Method for selecting winner
         judge_model: Model to use for judge aggregation (required if method is "judge")
+        synthesize_model: Model to use for synthesize aggregation (required if method is "synthesize")
 
     Returns:
         Tuple of (winning_response, voting_details)
@@ -319,10 +321,17 @@ async def voting_completion(
         client=client,
         settings=settings,
         judge_model=judge_model,
+        synthesize_model=synthesize_model,
     )
 
-    winner_index = result.winner_index
-    winner_model, winner_response = valid_responses[winner_index]
+    # Handle synthesized vs selected response
+    if result.winner_index == -1 and result.synthesized_response:
+        winner_index = -1
+        winner_model = "synthesized"
+        winner_response = result.synthesized_response
+    else:
+        winner_index = result.winner_index
+        winner_model, winner_response = valid_responses[winner_index]
 
     logger.debug(f"Winner (method={result.method}): {winner_response[:50]}...")
 
