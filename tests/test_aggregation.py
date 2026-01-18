@@ -9,6 +9,7 @@ from src.aggregation import (
     aggregate_acceptance,
     aggregate_judge,
     aggregate_synthesize,
+    aggregate_concat,
     AggregationResult,
     AGGREGATION_METHODS,
 )
@@ -219,6 +220,44 @@ class TestAggregateSynthesize:
         assert result.synthesized_response is None
 
 
+class TestAggregateConcat:
+    """Tests for concat aggregation."""
+
+    async def test_concatenates_responses(self) -> None:
+        """Concat method joins all responses with attribution."""
+        responses = [("model1", "First response"), ("model2", "Second response")]
+
+        result = await aggregate_concat(responses)
+
+        assert result.method == "concat"
+        assert result.winner_index == -1  # Concatenated, not selected
+        assert result.synthesized_response is not None
+        assert "[model1]" in result.synthesized_response
+        assert "First response" in result.synthesized_response
+        assert "[model2]" in result.synthesized_response
+        assert "Second response" in result.synthesized_response
+        assert "---" in result.synthesized_response  # Separator
+
+    async def test_single_response(self) -> None:
+        """Single response still gets attributed."""
+        responses = [("model1", "Only response")]
+
+        result = await aggregate_concat(responses)
+
+        assert result.method == "concat"
+        assert result.winner_index == -1
+        assert "[model1]" in result.synthesized_response
+        assert "Only response" in result.synthesized_response
+
+    async def test_empty_responses(self) -> None:
+        """Empty responses returns -1."""
+        result = await aggregate_concat([])
+
+        assert result.winner_index == -1
+        assert result.method == "concat"
+        assert result.synthesized_response is None
+
+
 class TestAggregateDispatcher:
     """Tests for the aggregate() dispatcher function."""
 
@@ -319,6 +358,20 @@ class TestAggregateDispatcher:
                 "synthesize", [], "question?", mock_client, settings, None, None
             )
 
+    async def test_dispatches_to_concat(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Dispatches to concat aggregation."""
+        responses = [("m1", "r1"), ("m2", "r2")]
+        result = await aggregate(
+            "concat", responses, "question?", mock_client, settings
+        )
+
+        assert result.method == "concat"
+        assert result.winner_index == -1
+        assert result.synthesized_response is not None
+        assert "[m1]" in result.synthesized_response
+
 
 class TestAggregationMethodRegistry:
     """Tests for the AGGREGATION_METHODS registry."""
@@ -329,7 +382,8 @@ class TestAggregationMethodRegistry:
         assert "random" in AGGREGATION_METHODS
         assert "judge" in AGGREGATION_METHODS
         assert "synthesize" in AGGREGATION_METHODS
+        assert "concat" in AGGREGATION_METHODS
 
     def test_expected_method_count(self) -> None:
         """Registry has expected number of methods."""
-        assert len(AGGREGATION_METHODS) == 4
+        assert len(AGGREGATION_METHODS) == 5

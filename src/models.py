@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 # Valid aggregation methods for ensemble response selection
-AggregationMethod = Literal["acceptance_voting", "random", "judge", "synthesize"]
+AggregationMethod = Literal["acceptance_voting", "random", "judge", "synthesize", "concat"]
 
 
 class ChatMessage(BaseModel):

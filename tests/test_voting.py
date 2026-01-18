@@ -276,6 +276,33 @@ class TestVotingCompletion:
             # Only 1 call - no voting phase
             assert mock_fetch.call_count == 1
 
+    async def test_random_aggregation_makes_single_call(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Random aggregation selects model first, making only 1 call instead of N."""
+        with patch("src.voting.fetch_completion_simple") as mock_fetch:
+            mock_fetch.return_value = "Random winner response"
+
+            messages = [ChatMessage(role="user", content="Hello")]
+            ensemble = [
+                EnsembleMember(model="model1"),
+                EnsembleMember(model="model2"),
+                EnsembleMember(model="model3"),
+            ]
+
+            winner, details = await voting_completion(
+                mock_client, settings, messages, ensemble,
+                aggregation_method="random",
+            )
+
+            assert winner == "Random winner response"
+            assert details.aggregation_method == "random"
+            assert len(details.candidates) == 1
+            # Only 1 call - random optimization selects model first
+            assert mock_fetch.call_count == 1
+            # The selected model should be one of the ensemble members
+            assert details.candidates[0].model in ["model1", "model2", "model3"]
+
 
 class TestGenerateResponses:
     """Tests for generate_responses function."""

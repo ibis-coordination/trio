@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 import re
 
 import httpx
@@ -312,6 +313,34 @@ async def voting_completion(
             winner_index=0,
             candidates=[Candidate(model=model_name, response=response, accepted=0, preferred=0)],
             aggregation_method="none",
+        )
+
+    # Random optimization: select model first, then generate only from that one
+    # This reduces cost from N calls to 1 call
+    if aggregation_method == "random":
+        logger.debug(f"Random aggregation: selecting 1 of {len(ensemble)} models")
+        selected_index = random.randint(0, len(ensemble) - 1)
+        member = ensemble[selected_index]
+
+        # Extract default system prompt
+        default_system = DEFAULT_SYSTEM_PROMPT
+        if messages and messages[0].role == "system":
+            default_system = messages[0].content
+
+        # Generate response from the randomly selected model
+        model_name, response = await _generate_single_response(
+            client, settings, messages, member, max_tokens, temperature, default_system
+        )
+
+        if not response:
+            return "Sorry, I couldn't generate a response.", VotingDetails(
+                winner_index=-1, candidates=[], aggregation_method="random"
+            )
+
+        return response, VotingDetails(
+            winner_index=0,
+            candidates=[Candidate(model=model_name, response=response, accepted=0, preferred=0)],
+            aggregation_method="random",
         )
 
     # Phase 1: Generate responses from all models

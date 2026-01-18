@@ -261,7 +261,38 @@ Provide only the synthesized response, no preamble."""
     )
 
 
-AGGREGATION_METHODS = ["acceptance_voting", "random", "judge", "synthesize"]
+async def aggregate_concat(
+    responses: list[tuple[str, str]],
+    **kwargs: Any,
+) -> AggregationResult:
+    """Concatenate all responses into a single combined response.
+
+    Simply joins all responses with a separator. Unlike synthesize, this
+    does not use an LLM to combine them - it's a raw concatenation.
+
+    Args:
+        responses: List of (model_name, response_text) tuples
+
+    Returns:
+        AggregationResult with concatenated_response (winner_index will be -1)
+    """
+    if not responses:
+        return AggregationResult(winner_index=-1, method="concat")
+
+    # Join all responses with model attribution
+    parts = [f"[{model}]\n{resp}" for model, resp in responses]
+    concatenated = "\n\n---\n\n".join(parts)
+
+    return AggregationResult(
+        winner_index=-1,  # Special marker: concatenated, not selected
+        method="concat",
+        acceptance_counts=[0] * len(responses),
+        preference_counts=[0] * len(responses),
+        synthesized_response=concatenated,  # Reuse this field for the combined output
+    )
+
+
+AGGREGATION_METHODS = ["acceptance_voting", "random", "judge", "synthesize", "concat"]
 
 
 async def aggregate(
@@ -320,6 +351,8 @@ async def aggregate(
         )
     elif method == "random":
         return await aggregate_random(responses=responses)
+    elif method == "concat":
+        return await aggregate_concat(responses=responses)
     else:  # acceptance_voting
         return await aggregate_acceptance(
             responses=responses,

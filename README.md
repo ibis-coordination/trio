@@ -44,9 +44,10 @@ The `aggregation_method` determines how Trio reduces N responses into one:
 | Method | Calls | Description |
 |--------|-------|-------------|
 | `acceptance_voting` | 2N | Each model votes on all responses; winner has most acceptances |
-| `random` | N | Randomly select one response |
+| `random` | 1 | Randomly select one model, then call only that model |
 | `judge` | N+1 | A separate judge model picks the best |
 | `synthesize` | N+1 | A separate model synthesizes all responses into one |
+| `concat` | N | Concatenate all responses into one output |
 
 ### Acceptance Voting
 
@@ -58,7 +59,7 @@ Winner is ranked by acceptance count, then preference count. Most thorough but s
 
 ### Random
 
-Randomly selects one response. Fast and cheap—useful for A/B testing ensemble configurations or when you want diversity over consistency.
+Randomly selects one model from the ensemble and calls only that model. The selection happens *before* any API calls, making this the cheapest aggregation method (1 call instead of N). Useful for A/B testing ensemble configurations or when you want diversity over consistency.
 
 ### Judge
 
@@ -67,6 +68,10 @@ A separate "judge" model evaluates all responses and picks the best. Good when y
 ### Synthesize
 
 A separate model reads all responses and synthesizes them into a single combined answer. Unlike the other methods which select a winner, this creates new content that draws from all responses.
+
+### Concat
+
+Concatenates all responses into a single output with model attribution. Unlike `synthesize`, this doesn't use an LLM to combine responses—it's a raw concatenation. Useful when you want to see all perspectives without any selection or editing.
 
 ## Pass-Through Mode
 
@@ -211,7 +216,7 @@ OpenAI-compatible chat completions endpoint.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `ensemble` | `EnsembleMember[]` | Yes | List of models to query |
-| `aggregation_method` | `string` | Yes | One of: `acceptance_voting`, `random`, `judge`, `synthesize` |
+| `aggregation_method` | `string` | Yes | One of: `acceptance_voting`, `random`, `judge`, `synthesize`, `concat` |
 | `judge_model` | `string` | If judge | Model to use as judge |
 | `synthesize_model` | `string` | If synthesize | Model to synthesize responses |
 
