@@ -1,0 +1,38 @@
+services:
+  trio:
+    image: ghcr.io/ibis-coordination/trio:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - TRIO_BACKEND_URL=http://litellm:4000
+      - TRIO_MODELS=llama3.2:1b,llama3.2:3b,mistral
+      - TRIO_AGGREGATION_METHOD=acceptance_voting
+    depends_on:
+      - litellm
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+    environment:
+      # Pass through API keys from host environment
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    command: ["--config", "/app/config.yaml"]
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

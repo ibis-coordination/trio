@@ -1,0 +1,42 @@
+model_list:
+  # Ollama models (local)
+  - model_name: llama3.2:1b
+    litellm_params:
+      model: ollama/llama3.2:1b
+      api_base: http://ollama:11434
+
+  - model_name: llama3.2:3b
+    litellm_params:
+      model: ollama/llama3.2:3b
+      api_base: http://ollama:11434
+
+  - model_name: mistral
+    litellm_params:
+      model: ollama/mistral
+      api_base: http://ollama:11434
+
+  - model_name: codellama
+    litellm_params:
+      model: ollama/codellama
+      api_base: http://ollama:11434
+
+  # Anthropic models (requires ANTHROPIC_API_KEY env var)
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-20250514
+
+  # OpenAI models (requires OPENAI_API_KEY env var)
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+
+general_settings:
+  master_key: sk-1234

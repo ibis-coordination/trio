@@ -63,9 +63,13 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ## Quick Start
 
+### Using Docker Compose (recommended)
+
+The repository includes an example `docker-compose.yml` that runs Trio with LiteLLM and Ollama:
+
 ```bash
-# Start all LLM services including Trio
-docker compose --profile llm up -d
+# Start all services
+docker compose up -d
 
 # Pull required Ollama models
 docker compose exec ollama ollama pull llama3.2:1b
@@ -80,6 +84,58 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "trio-1.0", "messages": [{"role": "user", "content": "What is 2+2?"}]}'
 ```
+
+### Using Docker directly
+
+If you already have a LiteLLM or OpenAI-compatible backend running:
+
+```bash
+docker run -p 8000:8000 \
+  -e TRIO_BACKEND_URL=http://your-backend:4000 \
+  -e TRIO_MODELS=model1,model2,model3 \
+  ghcr.io/ibis-coordination/trio:latest
+```
+
+### From source
+
+```bash
+git clone https://github.com/ibis-coordination/trio.git
+cd trio
+pip install .
+TRIO_BACKEND_URL=http://localhost:4000 uvicorn src.main:app --host 0.0.0.0 --port 8000
+```
+
+### Using Anthropic or OpenAI
+
+The included `litellm-config.yaml` has Anthropic and OpenAI models pre-configured. To use them, set your API keys before starting:
+
+```bash
+# Set API keys
+export ANTHROPIC_API_KEY=your-anthropic-key
+export OPENAI_API_KEY=your-openai-key
+
+# Start services (keys are passed through to LiteLLM)
+docker compose up -d
+
+# Use Claude models in the ensemble
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "trio-1.0",
+    "messages": [{"role": "user", "content": "What is 2+2?"}],
+    "trio_ensemble": [
+      {"model": "claude-sonnet"},
+      {"model": "claude-haiku"},
+      {"model": "gpt-4o-mini"}
+    ]
+  }'
+```
+
+Available cloud models in the default config:
+- **Anthropic**: `claude-sonnet`, `claude-haiku`
+- **OpenAI**: `gpt-4o`, `gpt-4o-mini`
+
+You can mix local Ollama models with cloud models in the same ensemble.
 
 ## API
 
