@@ -4,12 +4,13 @@ import logging
 import random
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
 from .config import Settings
 from .llm import fetch_completion_simple
+from .models import AggregationMethod
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class AggregationResult:
     """Result of an aggregation method."""
 
     winner_index: int
-    method: str
+    method: AggregationMethod
     # Per-response metadata (acceptance/preference counts, etc.)
     acceptance_counts: list[int] = field(default_factory=list)
     preference_counts: list[int] = field(default_factory=list)

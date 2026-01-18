@@ -6,6 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# Valid aggregation methods for ensemble response selection
+AggregationMethod = Literal["acceptance_voting", "random", "judge"]
+
 
 class ChatMessage(BaseModel):
     """A single message in the chat conversation."""
@@ -22,23 +25,21 @@ class EnsembleMember(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    """Request body for /v1/chat/completions endpoint."""
+    """Request body for /v1/chat/completions endpoint.
+
+    Note: Some OpenAI parameters (top_p, n, stop, presence_penalty, frequency_penalty,
+    user) are not supported as they don't apply to ensemble voting.
+    """
 
     model: str = "trio"
     messages: list[ChatMessage]
     max_tokens: int = 500
     temperature: float = 0.7
-    top_p: float | None = None
-    n: int = 1
-    stream: bool = False
-    stop: str | list[str] | None = None
-    presence_penalty: float = 0.0
-    frequency_penalty: float = 0.0
-    user: str | None = None
+    stream: bool = False  # Not supported, returns 501
     # Trio-specific: specify ensemble members with optional per-model system prompts
     trio_ensemble: list[EnsembleMember] | None = None
-    # Trio-specific: aggregation method ("acceptance_voting", "random", or "judge")
-    trio_aggregation_method: str | None = None
+    # Trio-specific: aggregation method
+    trio_aggregation_method: AggregationMethod | None = None
     # Trio-specific: model to use for judge aggregation
     trio_judge_model: str | None = None
 
@@ -100,4 +101,4 @@ class VotingDetails(BaseModel):
 
     winner_index: int
     candidates: list[Candidate]
-    aggregation_method: str = "acceptance_voting"
+    aggregation_method: AggregationMethod | Literal["none"] = "acceptance_voting"

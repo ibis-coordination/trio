@@ -259,3 +259,66 @@ class TestChatCompletionsEndpoint:
             call_args = mock_voting.call_args
             ensemble = call_args[0][3]
             assert len(ensemble) > 1  # Default ensemble has multiple models
+
+    def test_aggregation_method_passed_through(self, client: TestClient) -> None:
+        """trio_aggregation_method parameter is passed to voting_completion."""
+        with patch("src.main.voting_completion") as mock_voting:
+            mock_voting.return_value = (
+                "Response",
+                VotingDetails(winner_index=0, candidates=[], aggregation_method="random"),
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "trio",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "trio_aggregation_method": "random",
+                },
+            )
+
+            assert response.status_code == 200
+            call_args = mock_voting.call_args
+            # aggregation_method is the 7th positional argument (index 6)
+            assert call_args[0][6] == "random"
+
+    def test_judge_method_requires_judge_model(self, client: TestClient) -> None:
+        """Using 'judge' aggregation without trio_judge_model returns 400."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "trio",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "trio_aggregation_method": "judge",
+            },
+        )
+
+        assert response.status_code == 400
+        assert "trio_judge_model" in response.json()["detail"]
+
+    def test_streaming_returns_501(self, client: TestClient) -> None:
+        """Streaming requests return 501 Not Implemented."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "trio",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": True,
+            },
+        )
+
+        assert response.status_code == 501
+        assert "not supported" in response.json()["detail"].lower()
+
+    def test_invalid_aggregation_method_returns_422(self, client: TestClient) -> None:
+        """Invalid aggregation method returns 422 validation error."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "trio",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "trio_aggregation_method": "invalid_method",
+            },
+        )
+
+        assert response.status_code == 422

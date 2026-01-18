@@ -34,7 +34,8 @@ async def generate_responses(
         temperature: Sampling temperature
 
     Returns:
-        List of (model_name, response_text) tuples
+        List of (model_name, response_text) tuples. response_text is None if the
+        model request failed.
     """
     # Extract the default system prompt from messages, if present
     default_system = DEFAULT_SYSTEM_PROMPT

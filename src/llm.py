@@ -19,11 +19,14 @@ async def fetch_completion(
 ) -> str | None:
     """Fetch a completion from the backend LLM.
 
+    This is the general-purpose function that supports multi-turn conversations.
+    For simple single-turn requests, use fetch_completion_simple() instead.
+
     Args:
         client: HTTP client to use for the request
         backend_url: Base URL of the LLM backend (e.g., http://litellm:4000)
         model: Model name to use
-        messages: List of chat messages
+        messages: List of chat messages (supports full conversation history)
         max_tokens: Maximum tokens to generate
         temperature: Sampling temperature
 

@@ -84,6 +84,10 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
 
     Voting details are included in the X-Trio-Details response header.
     """
+    # Streaming is not supported
+    if request.stream:
+        raise HTTPException(status_code=501, detail="Streaming is not supported")
+
     settings = get_settings()
 
     # Determine if this is a Trio ensemble request or pass-through

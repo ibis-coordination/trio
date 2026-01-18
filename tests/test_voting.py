@@ -4,7 +4,13 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from src.models import ChatMessage, EnsembleMember, VotingDetails
-from src.voting import pick_winner, get_voter_votes, voting_completion
+from src.voting import (
+    pick_winner,
+    get_voter_votes,
+    voting_completion,
+    generate_responses,
+    run_acceptance_voting,
+)
 from src.config import Settings
 
 
@@ -36,8 +42,8 @@ class TestPickWinner:
         preference = [1, 1]
 
         winner = pick_winner(responses, acceptance, preference)
-        # max() returns first element when all equal
-        assert winner in [0, 1]
+        # max() is deterministic and returns first element when all equal
+        assert winner == 0
 
     def test_empty_responses_returns_negative_one(self) -> None:
         """Empty response list returns -1."""
@@ -270,3 +276,162 @@ class TestVotingCompletion:
             assert details.candidates[0].model == "single-model"
             # Only 1 call - no voting phase
             assert mock_fetch.call_count == 1
+
+
+class TestGenerateResponses:
+    """Tests for generate_responses function."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def settings(self) -> Settings:
+        return Settings(
+            trio_models="model1,model2",
+            trio_backend_url="http://test-backend:4000",
+        )
+
+    async def test_generates_responses_in_parallel(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Generates responses from all ensemble members."""
+        with patch("src.voting.fetch_completion_simple") as mock_fetch:
+            mock_fetch.side_effect = ["Response 1", "Response 2", "Response 3"]
+
+            messages = [ChatMessage(role="user", content="Hello")]
+            ensemble = [
+                EnsembleMember(model="model1"),
+                EnsembleMember(model="model2"),
+                EnsembleMember(model="model3"),
+            ]
+
+            responses = await generate_responses(
+                mock_client, settings, messages, ensemble, 500, 0.7
+            )
+
+            assert len(responses) == 3
+            assert responses[0] == ("model1", "Response 1")
+            assert responses[1] == ("model2", "Response 2")
+            assert responses[2] == ("model3", "Response 3")
+
+    async def test_returns_none_for_failed_requests(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Returns None for models that fail to respond."""
+        with patch("src.voting.fetch_completion_simple") as mock_fetch:
+            mock_fetch.side_effect = ["Response 1", None, "Response 3"]
+
+            messages = [ChatMessage(role="user", content="Hello")]
+            ensemble = [
+                EnsembleMember(model="model1"),
+                EnsembleMember(model="model2"),
+                EnsembleMember(model="model3"),
+            ]
+
+            responses = await generate_responses(
+                mock_client, settings, messages, ensemble, 500, 0.7
+            )
+
+            assert len(responses) == 3
+            assert responses[0] == ("model1", "Response 1")
+            assert responses[1] == ("model2", None)
+            assert responses[2] == ("model3", "Response 3")
+
+    async def test_uses_custom_system_prompts(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Uses per-model custom system prompts when provided."""
+        with patch("src.voting.fetch_completion_simple") as mock_fetch:
+            mock_fetch.return_value = "Response"
+
+            messages = [ChatMessage(role="user", content="Hello")]
+            ensemble = [
+                EnsembleMember(model="model1", system_prompt="Custom prompt 1"),
+                EnsembleMember(model="model2", system_prompt="Custom prompt 2"),
+            ]
+
+            await generate_responses(
+                mock_client, settings, messages, ensemble, 500, 0.7
+            )
+
+            calls = mock_fetch.call_args_list
+            assert calls[0][0][3] == "Custom prompt 1"
+            assert calls[1][0][3] == "Custom prompt 2"
+
+    async def test_uses_message_system_prompt_as_default(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Falls back to system message from conversation when no custom prompt."""
+        with patch("src.voting.fetch_completion_simple") as mock_fetch:
+            mock_fetch.return_value = "Response"
+
+            messages = [
+                ChatMessage(role="system", content="You are helpful"),
+                ChatMessage(role="user", content="Hello"),
+            ]
+            ensemble = [EnsembleMember(model="model1")]
+
+            await generate_responses(
+                mock_client, settings, messages, ensemble, 500, 0.7
+            )
+
+            calls = mock_fetch.call_args_list
+            assert calls[0][0][3] == "You are helpful"
+
+
+class TestRunAcceptanceVoting:
+    """Tests for run_acceptance_voting function."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def settings(self) -> Settings:
+        return Settings(
+            trio_models="model1,model2",
+            trio_backend_url="http://test-backend:4000",
+        )
+
+    async def test_aggregates_votes_from_all_models(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Collects and aggregates votes from all models."""
+        with patch("src.voting.fetch_completion_simple") as mock_fetch:
+            mock_fetch.side_effect = [
+                "ACCEPTED: 1, 2\nPREFERRED: 1",  # model1 votes
+                "ACCEPTED: 1, 2, 3\nPREFERRED: 2",  # model2 votes
+                "ACCEPTED: 2\nPREFERRED: 2",  # model3 votes
+            ]
+
+            responses = [("model1", "r1"), ("model2", "r2"), ("model3", "r3")]
+
+            acceptance_counts, preference_counts = await run_acceptance_voting(
+                mock_client, settings, "Question?", responses
+            )
+
+            # Response 1: accepted by model1, model2 = 2 acceptances, 1 preference
+            # Response 2: accepted by model1, model2, model3 = 3 acceptances, 2 preferences
+            # Response 3: accepted by model2 = 1 acceptance, 0 preferences
+            assert acceptance_counts == [2, 3, 1]
+            assert preference_counts == [1, 2, 0]
+
+    async def test_handles_empty_votes(
+        self, mock_client: AsyncMock, settings: Settings
+    ) -> None:
+        """Handles models that return no valid votes."""
+        with patch("src.voting.fetch_completion_simple") as mock_fetch:
+            mock_fetch.side_effect = [
+                None,  # model1 fails
+                "I'm not sure",  # model2 returns unparseable response
+            ]
+
+            responses = [("model1", "r1"), ("model2", "r2")]
+
+            acceptance_counts, preference_counts = await run_acceptance_voting(
+                mock_client, settings, "Question?", responses
+            )
+
+            assert acceptance_counts == [0, 0]
+            assert preference_counts == [0, 0]
