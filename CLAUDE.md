@@ -66,3 +66,7 @@ The codebase follows a straightforward request flow:
 - **Recursive composition**: `EnsembleMember.model` can be a nested `EnsembleModel` for hierarchical ensembles
 - **Explicit configuration**: No defaults for ensemble or aggregation method - requests must be explicit
 - **Voting details**: Returned in `X-Trio-Details` response header for debugging/transparency
+
+## Release Process
+
+- **CHANGELOG.md**: Document all notable changes for each release, including breaking changes, new features, and improvements

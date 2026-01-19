@@ -400,3 +400,7 @@ pytest
 # Run type checker
 mypy src/
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history and breaking changes.
