@@ -36,3 +36,10 @@ htmlcov/
 *.swo
 *~
 .DS_Store
+
+# Frontend build output
+static/
+
+# Node modules
+node_modules/
+test-results/

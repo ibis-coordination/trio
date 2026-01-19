@@ -1,20 +1,23 @@
 services:
   trio:
-    image: ghcr.io/ibis-coordination/trio:latest
+    build: .
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - TRIO_BACKEND_URL=http://litellm:4000
-      - TRIO_MODELS=llama3.2:1b,llama3.2:3b,mistral
-      - TRIO_AGGREGATION_METHOD=acceptance_voting
+    volumes:
+      - ./static:/app/static:ro
     depends_on:
       - litellm
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
-    ports:
-      - "4000:4000"
+    # Internal only - no port exposed externally
     volumes:
       - ./litellm-config.yaml:/app/config.yaml
     environment:
@@ -25,14 +28,22 @@ services:
     depends_on:
       - ollama
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   ollama:
     image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    # Internal only - no port exposed externally
     volumes:
-      - ollama_data:/root/.ollama
+      - harmonicteam_ollama_data:/root/.ollama
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
 
 volumes:
-  ollama_data:
+  harmonicteam_ollama_data:
+    external: true

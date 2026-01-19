@@ -2,10 +2,12 @@
 
 import json
 import logging
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .models import (
@@ -158,6 +160,12 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
     response.headers["X-Trio-Details"] = json.dumps(voting_details.model_dump())
 
     return completion_response
+
+
+# Serve static frontend files at /chat/
+static_dir = Path(__file__).parent.parent / "static"
+if static_dir.exists():
+    app.mount("/chat", StaticFiles(directory=static_dir, html=True), name="chat")
 
 
 if __name__ == "__main__":
