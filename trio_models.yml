@@ -1,0 +1,62 @@
+# Trio Model Definitions
+#
+# base_model_list: Backend models (same format as litellm-config.yaml)
+# trio_model_list: Trio ensemble models, referenced with "trio:<model_name>"
+#
+# NOTE: All ensemble members run in PARALLEL. Each model only sees
+# the original messages, not each other's responses. Aggregation
+# (voting/synthesis) happens after all responses are collected.
+
+base_model_list:
+  # Ollama models (local)
+  - model_name: llama3.2:1b
+    litellm_params:
+      model: ollama/llama3.2:1b
+      api_base: http://ollama:11434
+
+trio_model_list:
+  # Specific Details vs Big Picture
+  - model_name: zoom-in-zoom-out
+    trio_params:
+      ensemble:
+        - model: llama3.2:1b
+          system_prompt: "Zoom in: Focus only on the specific details of this prompt exactly as it is stated."
+        - model: llama3.2:1b
+          system_prompt: "Zoom out: Consider the bigger picture. What contextual factors are worth considering?"
+      aggregation_method: synthesize
+      synthesize_model: llama3.2:1b
+
+  # Breadth vs Depth
+  - model_name: breadth-and-depth
+    trio_params:
+      ensemble:
+        - model: llama3.2:1b
+          system_prompt: "Provide a broad overview covering all relevant aspects. Prioritize breadth over depth."
+        - model: llama3.2:1b
+          system_prompt: "Focus on the single most important aspect and explore it in depth. Prioritize depth over breadth."
+      aggregation_method: synthesize
+      synthesize_model: llama3.2:1b
+
+  # Rumsfeld Matrix
+  - model_name: rumsfeld
+    trio_params:
+      ensemble:
+        - model:
+            ensemble:
+              - model: llama3.2:1b
+                system_prompt: "Focus on known-knowns: What facts and established knowledge apply here? What do we know for certain?"
+              - model: llama3.2:1b
+                system_prompt: "Focus on known-unknowns: What questions remain unanswered? What gaps in our knowledge should we call out?"
+            aggregation_method: synthesize
+            synthesize_model: llama3.2:1b
+        - model:
+            ensemble:
+              - model: llama3.2:1b
+                system_prompt: "Consider unknown-knowns: What seemingly unrelated information do we know that might actually be relevant in ways that are not immediately obvious? What oblique perspectives might yield insight?"
+              - model: llama3.2:1b
+                system_prompt: "Consider unknown-unknowns: What blind spots do we have? What's not currently on our radar at all that might be worth investigating? What kinds of unexpected information might we encounter?"
+            aggregation_method: synthesize
+            synthesize_model: llama3.2:1b
+      aggregation_method: synthesize
+      synthesize_model: llama3.2:1b
+

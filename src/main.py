@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .config import get_settings
+from .config import get_settings, get_trio_models
 from .models import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -87,6 +87,14 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
         raise HTTPException(status_code=501, detail="Streaming is not supported")
 
     settings = get_settings()
+
+    # Resolve trio model references (e.g., "trio:perspectives")
+    if isinstance(request.model, str) and request.model.startswith("trio:"):
+        model_name = request.model[5:]
+        trio_models = get_trio_models()
+        if model_name not in trio_models:
+            raise HTTPException(status_code=404, detail=f"Trio model '{model_name}' not found")
+        request.model = EnsembleModel(**trio_models[model_name])
 
     # Determine if this is an ensemble request or pass-through
     if isinstance(request.model, EnsembleModel):

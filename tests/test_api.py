@@ -374,3 +374,74 @@ class TestChatCompletionsEndpoint:
             )
 
             assert response.status_code == 200
+
+
+class TestTrioModelResolution:
+    """Tests for trio: model reference resolution."""
+
+    def test_resolves_trio_model_reference(self, client: TestClient) -> None:
+        """trio: prefix resolves to ensemble config from YAML."""
+        with patch("src.main.voting_completion") as mock_voting:
+            mock_voting.return_value = (
+                "Synthesized response",
+                VotingDetails(winner_index=0, candidates=[]),
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "trio:zoom-in-zoom-out",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+            )
+
+            assert response.status_code == 200
+            # Verify ensemble was resolved from YAML
+            call_args = mock_voting.call_args
+            ensemble = call_args[0][3]
+            assert len(ensemble) == 2
+            assert ensemble[0].model == "llama3.2:1b"
+            assert "Zoom in" in ensemble[0].system_prompt
+            assert ensemble[1].model == "llama3.2:1b"
+            assert "Zoom out" in ensemble[1].system_prompt
+            # Verify aggregation method
+            assert call_args[0][6] == "synthesize"
+            assert call_args[0][8] == "llama3.2:1b"  # synthesize_model
+
+    def test_trio_model_not_found(self, client: TestClient) -> None:
+        """Unknown trio: model returns 404."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "trio:nonexistent",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_resolves_nested_trio_model(self, client: TestClient) -> None:
+        """trio: model with nested ensembles resolves correctly."""
+        with patch("src.main.voting_completion") as mock_voting:
+            mock_voting.return_value = (
+                "Rumsfeld response",
+                VotingDetails(winner_index=0, candidates=[]),
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "trio:rumsfeld",
+                    "messages": [{"role": "user", "content": "Analyze this"}],
+                },
+            )
+
+            assert response.status_code == 200
+            # Verify nested ensemble structure
+            call_args = mock_voting.call_args
+            ensemble = call_args[0][3]
+            assert len(ensemble) == 2
+            # Each member should be a nested ensemble
+            assert hasattr(ensemble[0], "model")
+            assert hasattr(ensemble[1], "model")
