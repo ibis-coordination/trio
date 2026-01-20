@@ -1,7 +1,8 @@
 import type { ChatMessage } from '../types';
+import { VotingDetailsPanel } from './VotingDetailsPanel';
 
 interface MessageBubbleProps {
-  message: ChatMessage;
+  readonly message: ChatMessage;
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
@@ -30,6 +31,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             </span>
           )}
         </div>
+      )}
+      {message.metadata?.votingDetails && (
+        <VotingDetailsPanel details={message.metadata.votingDetails} />
       )}
     </div>
   );

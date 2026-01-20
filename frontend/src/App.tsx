@@ -5,20 +5,30 @@ import type {
   AppError,
   DebugInfo,
   ChatCompletionRequest,
+  ConfigMode,
+  EnsembleModel,
 } from './types';
 import { sendChatCompletion, toAppError, ValidationError } from './services/api';
 import { ModelConfigPanel } from './components/ModelConfigPanel';
 import { ChatPanel } from './components/ChatPanel';
 import { DebugPanel } from './components/DebugPanel';
 
+// Default ensemble configuration
+const DEFAULT_ENSEMBLE_CONFIG: EnsembleModel = {
+  ensemble: [{ model: '' }],
+  aggregation_method: 'acceptance_voting',
+};
+
 export function App() {
   // Model configuration state
+  const [mode, setMode] = useState<ConfigMode>('simple');
   const [model, setModel] = useState('llama3.2:1b');
+  const [ensembleConfig, setEnsembleConfig] = useState<EnsembleModel>(DEFAULT_ENSEMBLE_CONFIG);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Chat state
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const messagesRef = useRef<ChatMessage[]>([]); // Ref to avoid stale closure
+  const [messages, setMessages] = useState<readonly ChatMessage[]>([]);
+  const messagesRef = useRef<readonly ChatMessage[]>([]); // Ref to avoid stale closure
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
 
@@ -33,9 +43,21 @@ export function App() {
     lastHeaders: null,
   });
 
+  // Clear validation error when mode changes
+  const handleModeChange = useCallback((newMode: ConfigMode) => {
+    setMode(newMode);
+    setValidationError(null);
+  }, []);
+
   // Clear validation error when model changes
   const handleModelChange = useCallback((newModel: string) => {
     setModel(newModel);
+    setValidationError(null);
+  }, []);
+
+  // Clear validation error when ensemble config changes
+  const handleEnsembleConfigChange = useCallback((newConfig: EnsembleModel) => {
+    setEnsembleConfig(newConfig);
     setValidationError(null);
   }, []);
 
@@ -51,14 +73,15 @@ export function App() {
         { role: 'user' as const, content },
       ];
 
+      // Build request based on mode
       const request: ChatCompletionRequest = {
-        model,
+        model: mode === 'simple' ? model : ensembleConfig,
         messages: requestMessages,
       };
 
       // Add user message to chat immediately
       const userMessage: ChatMessage = {
-        id: `user-${Date.now()}`,
+        id: `user-${String(Date.now())}`,
         role: 'user',
         content,
         timestamp: new Date(),
@@ -97,7 +120,7 @@ export function App() {
         return;
       }
 
-      const { data, headers } = result.right;
+      const { data, votingDetails, headers } = result.right;
 
       // Update debug info
       setDebugInfo((prev) => ({
@@ -106,9 +129,9 @@ export function App() {
         lastHeaders: headers,
       }));
 
-      // Add assistant message
+      // Add assistant message with voting details if available
       const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
+        id: `assistant-${String(Date.now())}`,
         role: 'assistant',
         content: data.choices[0]?.message.content || '',
         timestamp: new Date(),
@@ -118,11 +141,12 @@ export function App() {
           promptTokens: data.usage?.prompt_tokens,
           completionTokens: data.usage?.completion_tokens,
           totalTokens: data.usage?.total_tokens,
+          votingDetails: votingDetails || undefined,
         },
       };
       setMessages((prev) => [...prev, assistantMessage]);
     },
-    [model]
+    [mode, model, ensembleConfig]
   );
 
   // Clear chat handler
@@ -150,8 +174,12 @@ export function App() {
     <div className="app">
       <div className="app-layout">
         <ModelConfigPanel
+          mode={mode}
+          onModeChange={handleModeChange}
           model={model}
           onModelChange={handleModelChange}
+          ensembleConfig={ensembleConfig}
+          onEnsembleConfigChange={handleEnsembleConfigChange}
           validationError={validationError}
         />
 
@@ -160,7 +188,9 @@ export function App() {
           isLoading={isLoading}
           error={error}
           debugVisible={debugVisible}
-          onSendMessage={handleSendMessage}
+          onSendMessage={(content) => {
+            void handleSendMessage(content);
+          }}
           onClearChat={handleClearChat}
           onToggleDebug={handleToggleDebug}
           onDismissError={handleDismissError}

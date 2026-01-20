@@ -1,8 +1,8 @@
 import type { AppError } from '../types';
 
 interface ErrorBannerProps {
-  error: AppError;
-  onDismiss: () => void;
+  readonly error: AppError;
+  readonly onDismiss: () => void;
 }
 
 export function ErrorBanner({ error, onDismiss }: ErrorBannerProps) {

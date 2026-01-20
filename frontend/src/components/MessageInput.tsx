@@ -1,8 +1,8 @@
 import { useState, useCallback, KeyboardEvent } from 'react';
 
 interface MessageInputProps {
-  onSend: (message: string) => void;
-  disabled: boolean;
+  readonly onSend: (message: string) => void;
+  readonly disabled: boolean;
 }
 
 export function MessageInput({ onSend, disabled }: MessageInputProps) {
@@ -32,7 +32,7 @@ export function MessageInput({ onSend, disabled }: MessageInputProps) {
         data-testid="message-input"
         className="message-input"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => { setValue(e.target.value); }}
         onKeyDown={handleKeyDown}
         disabled={disabled}
         placeholder="Type a message..."

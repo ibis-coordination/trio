@@ -1,7 +1,7 @@
 import type { DebugInfo } from '../types';
 
 interface DebugPanelProps {
-  debugInfo: DebugInfo;
+  readonly debugInfo: DebugInfo;
 }
 
 export function DebugPanel({ debugInfo }: DebugPanelProps) {

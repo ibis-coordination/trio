@@ -5,14 +5,14 @@ import { MessageInput } from './MessageInput';
 import { ErrorBanner } from './ErrorBanner';
 
 interface ChatPanelProps {
-  messages: ChatMessage[];
-  isLoading: boolean;
-  error: AppError | null;
-  debugVisible: boolean;
-  onSendMessage: (message: string) => void;
-  onClearChat: () => void;
-  onToggleDebug: () => void;
-  onDismissError: () => void;
+  readonly messages: readonly ChatMessage[];
+  readonly isLoading: boolean;
+  readonly error: AppError | null;
+  readonly debugVisible: boolean;
+  readonly onSendMessage: (message: string) => void;
+  readonly onClearChat: () => void;
+  readonly onToggleDebug: () => void;
+  readonly onDismissError: () => void;
 }
 
 export function ChatPanel({

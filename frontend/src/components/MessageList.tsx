@@ -3,8 +3,8 @@ import type { ChatMessage } from '../types';
 import { MessageBubble } from './MessageBubble';
 
 interface MessageListProps {
-  messages: ChatMessage[];
-  isLoading: boolean;
+  readonly messages: readonly ChatMessage[];
+  readonly isLoading: boolean;
 }
 
 export function MessageList({ messages, isLoading }: MessageListProps) {

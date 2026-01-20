@@ -7,6 +7,7 @@ import type {
   ChatCompletionResponse,
   VotingDetails,
   AppError,
+  EnsembleModel,
 } from '../types';
 
 // Error types
@@ -18,12 +19,15 @@ export class ValidationError {
   ) {}
 }
 
-export class ApiError {
+export class ApiError extends Error {
   readonly _tag = 'ApiError';
   constructor(
     readonly status: number,
-    readonly message: string
-  ) {}
+    message: string
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 export class NetworkError {
@@ -33,12 +37,83 @@ export class NetworkError {
 
 export type ChatError = ValidationError | ApiError | NetworkError;
 
+/**
+ * Safely parse JSON, returning undefined on failure
+ */
+const parseJsonSafe = (json: string): unknown => {
+  try {
+    return JSON.parse(json) as unknown;
+  } catch {
+    return undefined;
+  }
+};
+
 // Response type including headers
 export interface ApiResponse {
-  data: ChatCompletionResponse;
-  votingDetails: VotingDetails | null;
-  headers: Record<string, string>;
+  readonly data: ChatCompletionResponse;
+  readonly votingDetails: VotingDetails | null;
+  readonly headers: Record<string, string>;
 }
+
+/**
+ * Check if model is an EnsembleModel object
+ */
+const isEnsembleModel = (model: string | EnsembleModel): model is EnsembleModel => {
+  return typeof model === 'object' && 'ensemble' in model;
+};
+
+/**
+ * Validate an ensemble model configuration
+ */
+const validateEnsembleModel = (
+  model: EnsembleModel
+): Effect.Effect<EnsembleModel, ValidationError> => {
+  // Validate ensemble has at least one member
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime validation of external data
+  if (!model.ensemble || model.ensemble.length === 0) {
+    return Effect.fail(new ValidationError('ensemble', 'At least one ensemble member required'));
+  }
+
+  // Validate each member has a non-empty model name
+  const emptyModelIndex = model.ensemble.findIndex((member) => !member.model.trim());
+  if (emptyModelIndex !== -1) {
+    return Effect.fail(
+      new ValidationError(`ensemble[${String(emptyModelIndex)}].model`, 'Model name required for all members')
+    );
+  }
+
+  // Validate aggregation method is set
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime validation of external data
+  if (!model.aggregation_method) {
+    return Effect.fail(new ValidationError('aggregation_method', 'Aggregation method required'));
+  }
+
+  // Validate judge model if aggregation is judge
+  if (model.aggregation_method === 'judge') {
+    if (!model.judge_model || !model.judge_model.trim()) {
+      return Effect.fail(new ValidationError('judge_model', 'Judge model required'));
+    }
+  }
+
+  // Validate synthesize model if aggregation is synthesize
+  if (model.aggregation_method === 'synthesize') {
+    if (!model.synthesize_model || !model.synthesize_model.trim()) {
+      return Effect.fail(new ValidationError('synthesize_model', 'Synthesize model required'));
+    }
+  }
+
+  // Return cleaned model with trimmed values
+  return Effect.succeed({
+    ...model,
+    ensemble: model.ensemble.map((m) => ({
+      ...m,
+      model: m.model.trim(),
+      system_prompt: m.system_prompt?.trim() || undefined,
+    })),
+    judge_model: model.judge_model?.trim(),
+    synthesize_model: model.synthesize_model?.trim(),
+  });
+};
 
 /**
  * Validate a chat request
@@ -46,15 +121,24 @@ export interface ApiResponse {
 const validateRequest = (
   request: ChatCompletionRequest
 ): Effect.Effect<ChatCompletionRequest, ValidationError> => {
-  // Validate model name
+  // Validate messages
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime validation of external data
+  if (!request.messages || request.messages.length === 0) {
+    return Effect.fail(new ValidationError('messages', 'Messages required'));
+  }
+
+  // Validate model based on type
+  if (isEnsembleModel(request.model)) {
+    return Effect.map(validateEnsembleModel(request.model), (validModel) => ({
+      ...request,
+      model: validModel,
+    }));
+  }
+
+  // Simple mode: validate model string
   const modelTrimmed = request.model.trim();
   if (!modelTrimmed) {
     return Effect.fail(new ValidationError('model', 'Model name required'));
-  }
-
-  // Validate messages
-  if (!request.messages || request.messages.length === 0) {
-    return Effect.fail(new ValidationError('messages', 'Messages required'));
   }
 
   return Effect.succeed({ ...request, model: modelTrimmed });
@@ -77,31 +161,23 @@ export const sendChatCompletion = (
           body: JSON.stringify(validRequest),
         });
 
-        // Collect headers
-        const headers: Record<string, string> = {};
-        response.headers.forEach((value, key) => {
-          headers[key] = value;
-        });
+        // Collect headers (immutably)
+        const headers: Record<string, string> = Object.fromEntries(response.headers.entries());
 
         // Parse voting details from header
-        let votingDetails: VotingDetails | null = null;
         const votingDetailsHeader = response.headers.get('X-Trio-Details');
-        if (votingDetailsHeader) {
-          try {
-            votingDetails = JSON.parse(votingDetailsHeader);
-          } catch {
-            // Ignore parse errors for voting details
-          }
-        }
+        const votingDetails: VotingDetails | null = votingDetailsHeader
+          ? ((parseJsonSafe(votingDetailsHeader) as VotingDetails | undefined) ?? null)
+          : null;
 
         if (!response.ok) {
-          const errorBody = await response.json().catch(() => ({}));
-          const message =
-            errorBody.detail || errorBody.message || `HTTP ${response.status}`;
+          const errorBody: unknown = await response.json().catch(() => ({}));
+          const errorObj = errorBody as { readonly detail?: string; readonly message?: string } | null;
+          const message = errorObj?.detail ?? errorObj?.message ?? `HTTP ${String(response.status)}`;
           throw new ApiError(response.status, message);
         }
 
-        const data: ChatCompletionResponse = await response.json();
+        const data = (await response.json()) as ChatCompletionResponse;
         return { data, votingDetails, headers };
       },
       catch: (error) => {

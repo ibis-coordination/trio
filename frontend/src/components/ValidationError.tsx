@@ -1,5 +1,5 @@
 interface ValidationErrorProps {
-  message: string;
+  readonly message: string;
 }
 
 export function ValidationError({ message }: ValidationErrorProps) {

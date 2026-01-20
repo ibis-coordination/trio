@@ -1,7 +1,7 @@
 interface ChatHeaderProps {
-  onClearChat: () => void;
-  onToggleDebug: () => void;
-  debugVisible: boolean;
+  readonly onClearChat: () => void;
+  readonly onToggleDebug: () => void;
+  readonly debugVisible: boolean;
 }
 
 export function ChatHeader({
