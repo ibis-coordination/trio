@@ -8,7 +8,7 @@ import re
 import httpx
 
 from .config import Settings
-from .llm import fetch_completion_simple
+from .llm import fetch_completion, fetch_completion_simple
 from .models import AggregationMethod, Candidate, ChatMessage, EnsembleMember, EnsembleModel, VotingDetails
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
@@ -59,17 +59,24 @@ async def _generate_single_response(
         )
         return model_name, nested_response
     else:
-        # Simple model: call backend directly
+        # Simple model: call backend directly with full conversation history
         model_name = member.model
         system_prompt = member.system_prompt if member.system_prompt else default_system
-        user_message = messages[-1].content if messages else ""
 
-        response = await fetch_completion_simple(
+        # Build messages with system prompt
+        model_messages = list(messages)
+        if model_messages and model_messages[0].role == "system":
+            # Replace existing system message with our system prompt
+            model_messages[0] = ChatMessage(role="system", content=system_prompt)
+        else:
+            # Prepend system message
+            model_messages.insert(0, ChatMessage(role="system", content=system_prompt))
+
+        response = await fetch_completion(
             client,
             settings.trio_backend_url,
             model_name,
-            system_prompt,
-            user_message,
+            model_messages,
             max_tokens,
             temperature,
         )

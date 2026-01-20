@@ -1,0 +1,8 @@
+# Development overrides - auto-loaded by docker compose
+# Mounts source code for live reloading without rebuilds
+services:
+  trio:
+    volumes:
+      - ./src:/app/src:ro
+      - ./static:/app/static:ro
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

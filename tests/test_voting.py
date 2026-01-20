@@ -162,13 +162,16 @@ class TestVotingCompletion:
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Returns the winning response based on voting."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            # First 3 calls: generate responses
-            # Next 3 calls: voting (each model votes)
-            mock_fetch.side_effect = [
+        with patch("src.voting.fetch_completion") as mock_gen, \
+             patch("src.voting.fetch_completion_simple") as mock_vote:
+            # fetch_completion: generate responses
+            mock_gen.side_effect = [
                 "Response from model1",
                 "Response from model2",
                 "Response from model3",
+            ]
+            # fetch_completion_simple: voting (each model votes)
+            mock_vote.side_effect = [
                 "ACCEPTED: 1, 2\nPREFERRED: 2",  # model1 votes
                 "ACCEPTED: 2, 3\nPREFERRED: 2",  # model2 votes
                 "ACCEPTED: 1, 2, 3\nPREFERRED: 2",  # model3 votes
@@ -193,8 +196,8 @@ class TestVotingCompletion:
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Returns error message when all models fail."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.return_value = None
+        with patch("src.voting.fetch_completion") as mock_gen:
+            mock_gen.return_value = None
 
             messages = [ChatMessage(role="user", content="Hello")]
             ensemble = [EnsembleMember(model="model1")]
@@ -211,8 +214,9 @@ class TestVotingCompletion:
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """When only one response succeeds, skip voting phase."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.side_effect = [
+        with patch("src.voting.fetch_completion") as mock_gen, \
+             patch("src.voting.fetch_completion_simple") as mock_vote:
+            mock_gen.side_effect = [
                 "Only response",
                 None,  # model2 fails
                 None,  # model3 fails
@@ -231,15 +235,18 @@ class TestVotingCompletion:
 
             assert winner == "Only response"
             assert details.winner_index == 0
-            # Only 3 calls (generation), no voting calls
-            assert mock_fetch.call_count == 3
+            # Only 3 generation calls, no voting calls
+            assert mock_gen.call_count == 3
+            assert mock_vote.call_count == 0
 
     async def test_uses_custom_system_prompts(
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Custom system prompts are passed to each model."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.return_value = "Response"
+        with patch("src.voting.fetch_completion", new_callable=AsyncMock) as mock_gen, \
+             patch("src.voting.fetch_completion_simple", new_callable=AsyncMock) as mock_vote:
+            mock_gen.return_value = "Response"
+            mock_vote.return_value = "ACCEPTED: 1, 2\nPREFERRED: 1"
 
             messages = [ChatMessage(role="user", content="Hello")]
             ensemble = [
@@ -249,18 +256,20 @@ class TestVotingCompletion:
 
             await voting_completion(mock_client, settings, messages, ensemble)
 
-            # Check the system prompts in the calls
-            calls = mock_fetch.call_args_list
-            # First two calls are for generation
-            assert calls[0][0][3] == "Be concise"  # system_prompt arg
-            assert calls[1][0][3] == "Be verbose"
+            # Check the system prompts in the generation calls
+            calls = mock_gen.call_args_list
+            # Both calls are for generation with custom system prompts
+            # fetch_completion(client, backend_url, model, messages, ...)
+            # messages[0] should be the system message
+            assert calls[0][0][3][0].content == "Be concise"
+            assert calls[1][0][3][0].content == "Be verbose"
 
     async def test_single_model_ensemble_skips_voting(
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """When ensemble has only one model, skip voting entirely."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.return_value = "Direct response"
+        with patch("src.voting.fetch_completion") as mock_gen:
+            mock_gen.return_value = "Direct response"
 
             messages = [ChatMessage(role="user", content="Hello")]
             ensemble = [EnsembleMember(model="single-model")]
@@ -274,14 +283,14 @@ class TestVotingCompletion:
             assert len(details.candidates) == 1
             assert details.candidates[0].model == "single-model"
             # Only 1 call - no voting phase
-            assert mock_fetch.call_count == 1
+            assert mock_gen.call_count == 1
 
     async def test_random_aggregation_makes_single_call(
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Random aggregation selects model first, making only 1 call instead of N."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.return_value = "Random winner response"
+        with patch("src.voting.fetch_completion") as mock_gen:
+            mock_gen.return_value = "Random winner response"
 
             messages = [ChatMessage(role="user", content="Hello")]
             ensemble = [
@@ -299,7 +308,7 @@ class TestVotingCompletion:
             assert details.aggregation_method == "random"
             assert len(details.candidates) == 1
             # Only 1 call - random optimization selects model first
-            assert mock_fetch.call_count == 1
+            assert mock_gen.call_count == 1
             # The selected model should be one of the ensemble members
             assert details.candidates[0].model in ["model1", "model2", "model3"]
 
@@ -321,8 +330,8 @@ class TestGenerateResponses:
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Generates responses from all ensemble members."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.side_effect = ["Response 1", "Response 2", "Response 3"]
+        with patch("src.voting.fetch_completion") as mock_gen:
+            mock_gen.side_effect = ["Response 1", "Response 2", "Response 3"]
 
             messages = [ChatMessage(role="user", content="Hello")]
             ensemble = [
@@ -344,8 +353,8 @@ class TestGenerateResponses:
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Returns None for models that fail to respond."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.side_effect = ["Response 1", None, "Response 3"]
+        with patch("src.voting.fetch_completion") as mock_gen:
+            mock_gen.side_effect = ["Response 1", None, "Response 3"]
 
             messages = [ChatMessage(role="user", content="Hello")]
             ensemble = [
@@ -367,8 +376,8 @@ class TestGenerateResponses:
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Uses per-model custom system prompts when provided."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.return_value = "Response"
+        with patch("src.voting.fetch_completion") as mock_gen:
+            mock_gen.return_value = "Response"
 
             messages = [ChatMessage(role="user", content="Hello")]
             ensemble = [
@@ -380,16 +389,19 @@ class TestGenerateResponses:
                 mock_client, settings, messages, ensemble, 500, 0.7
             )
 
-            calls = mock_fetch.call_args_list
-            assert calls[0][0][3] == "Custom prompt 1"
-            assert calls[1][0][3] == "Custom prompt 2"
+            calls = mock_gen.call_args_list
+            # Check that messages include the custom system prompts
+            # fetch_completion(client, backend_url, model, messages, ...)
+            # messages[0] should be the system message
+            assert calls[0][0][3][0].content == "Custom prompt 1"
+            assert calls[1][0][3][0].content == "Custom prompt 2"
 
     async def test_uses_message_system_prompt_as_default(
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
         """Falls back to system message from conversation when no custom prompt."""
-        with patch("src.voting.fetch_completion_simple") as mock_fetch:
-            mock_fetch.return_value = "Response"
+        with patch("src.voting.fetch_completion") as mock_gen:
+            mock_gen.return_value = "Response"
 
             messages = [
                 ChatMessage(role="system", content="You are helpful"),
@@ -401,8 +413,9 @@ class TestGenerateResponses:
                 mock_client, settings, messages, ensemble, 500, 0.7
             )
 
-            calls = mock_fetch.call_args_list
-            assert calls[0][0][3] == "You are helpful"
+            calls = mock_gen.call_args_list
+            # messages[0] should have the system prompt
+            assert calls[0][0][3][0].content == "You are helpful"
 
 
 class TestRunAcceptanceVoting:
