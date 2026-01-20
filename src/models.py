@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Valid aggregation methods for ensemble response selection
 AggregationMethod = Literal["acceptance_voting", "random", "judge", "synthesize", "concat"]
@@ -29,6 +29,14 @@ class EnsembleModel(BaseModel):
     judge_model: str | None = None
     synthesize_model: str | None = None
 
+    @field_validator("ensemble")
+    @classmethod
+    def ensemble_not_empty(cls, v: list["EnsembleMember"]) -> list["EnsembleMember"]:
+        """Validate that ensemble has at least one member."""
+        if len(v) == 0:
+            raise ValueError("Ensemble must contain at least one member")
+        return v
+
 
 class EnsembleMember(BaseModel):
     """A model in the ensemble with optional custom system prompt.
@@ -39,6 +47,14 @@ class EnsembleMember(BaseModel):
 
     model: str | EnsembleModel
     system_prompt: str | None = None
+
+    @field_validator("model")
+    @classmethod
+    def model_not_empty(cls, v: str | EnsembleModel) -> str | EnsembleModel:
+        """Validate that model name is not empty."""
+        if isinstance(v, str) and not v.strip():
+            raise ValueError("Model name cannot be empty")
+        return v
 
 
 # Rebuild models to resolve forward references
@@ -57,6 +73,14 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 500
     temperature: float = 0.7
     stream: bool = False  # Not supported, returns 501
+
+    @field_validator("model")
+    @classmethod
+    def model_not_empty(cls, v: str | EnsembleModel) -> str | EnsembleModel:
+        """Validate that model name is not empty."""
+        if isinstance(v, str) and not v.strip():
+            raise ValueError("Model name cannot be empty")
+        return v
 
 
 class ChatCompletionChoice(BaseModel):

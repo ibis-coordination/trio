@@ -329,6 +329,60 @@ class TestChatCompletionsEndpoint:
 
         assert response.status_code == 422
 
+    def test_rejects_empty_model_name(self, client: TestClient) -> None:
+        """Empty model name returns 422 validation error."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        assert response.status_code == 422
+
+    def test_rejects_whitespace_model_name(self, client: TestClient) -> None:
+        """Whitespace-only model name returns 422 validation error."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "   ",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        assert response.status_code == 422
+
+    def test_rejects_empty_ensemble(self, client: TestClient) -> None:
+        """Empty ensemble array returns 422 validation error."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": {
+                    "ensemble": [],
+                    "aggregation_method": "random",
+                },
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        assert response.status_code == 422
+
+    def test_rejects_empty_model_in_ensemble_member(self, client: TestClient) -> None:
+        """Ensemble member with empty model name returns 422 validation error."""
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": {
+                    "ensemble": [{"model": ""}],
+                    "aggregation_method": "random",
+                },
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        assert response.status_code == 422
+
     def test_requires_aggregation_method(self, client: TestClient) -> None:
         """Ensemble model requires aggregation_method."""
         response = client.post(

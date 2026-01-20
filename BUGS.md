@@ -4,14 +4,14 @@ This document contains bugs discovered through exploratory testing with Playwrig
 
 ## Summary
 
-| Bug # | Severity | Category | Description |
-|-------|----------|----------|-------------|
-| 1 | High | Backend | Empty model name accepted by API (returns 200 instead of 400) |
-| 2 | High | Backend | Empty ensemble array accepted by API (returns 200 instead of 400) |
-| 3 | Medium | Frontend | No client-side validation for empty model name |
-| 4 | Medium | Frontend | No client-side validation when all ensemble members are removed |
-| 5 | Medium | UX | Error responses displayed as assistant messages instead of errors |
-| 6 | Low | UX | No chat history persistence across page refreshes |
+| Bug # | Severity | Category | Status | Description |
+|-------|----------|----------|--------|-------------|
+| 1 | High | Backend | **FIXED** | Empty model name accepted by API (returns 200 instead of 400) |
+| 2 | High | Backend | **FIXED** | Empty ensemble array accepted by API (returns 200 instead of 400) |
+| 3 | Medium | Frontend | Open | No client-side validation for empty model name |
+| 4 | Medium | Frontend | Open | No client-side validation when all ensemble members are removed |
+| 5 | Medium | UX | Open | Error responses displayed as assistant messages instead of errors |
+| 6 | Low | UX | Open | No chat history persistence across page refreshes |
 
 ---
 
@@ -19,12 +19,17 @@ This document contains bugs discovered through exploratory testing with Playwrig
 
 ### Bug 1: Empty Model Name Accepted by API
 
+**Status:** ✅ FIXED
+
 **Severity:** High
 **Category:** Backend Validation
 **Affected Component:** `/v1/chat/completions` endpoint
 
 **Description:**
 When sending a request with an empty string model name (`"model": ""`), the API returns HTTP 200 with a response body containing "Sorry, I couldn't generate a response." instead of returning a proper HTTP 4xx error.
+
+**Fix:**
+Added Pydantic field validators in `src/models.py` to `ChatCompletionRequest` and `EnsembleMember` classes that reject empty or whitespace-only model names. API now returns HTTP 422 with a validation error message.
 
 **Steps to Reproduce:**
 ```bash
@@ -36,23 +41,14 @@ curl -s -X POST http://localhost:8001/v1/chat/completions \
 **Expected Behavior:**
 API should return HTTP 400 Bad Request with an error message like "Model name cannot be empty."
 
-**Actual Behavior:**
-API returns HTTP 200 with:
-```json
-{
-  "id": "trio-...",
-  "object": "chat.completion",
-  "model": "",
-  "choices": [{
-    "message": {"role": "assistant", "content": "Sorry, I couldn't generate a response."},
-    "finish_reason": "stop"
-  }]
-}
-```
+**Actual Behavior (after fix):**
+API returns HTTP 422 with validation error: "Model name cannot be empty"
 
 ---
 
 ### Bug 2: Empty Ensemble Array Accepted by API
+
+**Status:** ✅ FIXED
 
 **Severity:** High
 **Category:** Backend Validation
@@ -60,6 +56,9 @@ API returns HTTP 200 with:
 
 **Description:**
 When sending a request with an empty ensemble array (`"ensemble": []`), the API returns HTTP 200 with "Sorry, I couldn't generate a response." instead of a proper HTTP 4xx error.
+
+**Fix:**
+Added Pydantic field validator in `src/models.py` to `EnsembleModel` class that rejects empty ensemble arrays. API now returns HTTP 422 with a validation error message.
 
 **Steps to Reproduce:**
 ```bash
@@ -71,8 +70,8 @@ curl -s -X POST http://localhost:8001/v1/chat/completions \
 **Expected Behavior:**
 API should return HTTP 400 Bad Request with an error message like "Ensemble must contain at least one member."
 
-**Actual Behavior:**
-API returns HTTP 200 with a generic "Sorry, I couldn't generate a response." message.
+**Actual Behavior (after fix):**
+API returns HTTP 422 with validation error: "Ensemble must contain at least one member"
 
 ---
 
