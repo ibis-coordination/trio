@@ -5,9 +5,9 @@ import { Effect } from 'effect';
 import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
-  VotingDetails,
+  TrioDetails,
   AppError,
-  EnsembleModel,
+  TrioModel,
 } from '../types';
 
 // Error types
@@ -51,67 +51,46 @@ const parseJsonSafe = (json: string): unknown => {
 // Response type including headers
 export interface ApiResponse {
   readonly data: ChatCompletionResponse;
-  readonly votingDetails: VotingDetails | null;
+  readonly trioDetails: TrioDetails | null;
   readonly headers: Record<string, string>;
 }
 
 /**
- * Check if model is an EnsembleModel object
+ * Check if model is a TrioModel object
  */
-const isEnsembleModel = (model: string | EnsembleModel): model is EnsembleModel => {
-  return typeof model === 'object' && 'ensemble' in model;
+const isTrioModel = (model: string | TrioModel): model is TrioModel => {
+  return typeof model === 'object' && 'trio' in model;
 };
 
 /**
- * Validate an ensemble model configuration
+ * Validate a trio model configuration
  */
-const validateEnsembleModel = (
-  model: EnsembleModel
-): Effect.Effect<EnsembleModel, ValidationError> => {
-  // Validate ensemble has at least one member
+const validateTrioModel = (
+  model: TrioModel
+): Effect.Effect<TrioModel, ValidationError> => {
+  // Validate trio has exactly 3 members
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime validation of external data
-  if (!model.ensemble || model.ensemble.length === 0) {
-    return Effect.fail(new ValidationError('ensemble', 'At least one ensemble member required'));
+  if (!model.trio || model.trio.length !== 3) {
+    return Effect.fail(new ValidationError('trio', 'Trio must have exactly 3 members'));
   }
 
   // Validate each member has a non-empty model name
-  const emptyModelIndex = model.ensemble.findIndex((member) => !member.model.trim());
+  const emptyModelIndex = model.trio.findIndex((member) => !member.model.trim());
   if (emptyModelIndex !== -1) {
+    const labels = ['A', 'B', 'C'];
     return Effect.fail(
-      new ValidationError(`ensemble[${String(emptyModelIndex)}].model`, 'Model name required for all members')
+      new ValidationError(`trio[${labels[emptyModelIndex]}].model`, `Model ${labels[emptyModelIndex]} name required`)
     );
   }
 
-  // Validate aggregation method is set
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime validation of external data
-  if (!model.aggregation_method) {
-    return Effect.fail(new ValidationError('aggregation_method', 'Aggregation method required'));
-  }
-
-  // Validate judge model if aggregation is judge
-  if (model.aggregation_method === 'judge') {
-    if (!model.judge_model || !model.judge_model.trim()) {
-      return Effect.fail(new ValidationError('judge_model', 'Judge model required'));
-    }
-  }
-
-  // Validate synthesize model if aggregation is synthesize
-  if (model.aggregation_method === 'synthesize') {
-    if (!model.synthesize_model || !model.synthesize_model.trim()) {
-      return Effect.fail(new ValidationError('synthesize_model', 'Synthesize model required'));
-    }
-  }
-
   // Return cleaned model with trimmed values
+  const [m0, m1, m2] = model.trio;
   return Effect.succeed({
-    ...model,
-    ensemble: model.ensemble.map((m) => ({
-      ...m,
-      model: m.model.trim(),
-      system_prompt: m.system_prompt?.trim() || undefined,
-    })),
-    judge_model: model.judge_model?.trim(),
-    synthesize_model: model.synthesize_model?.trim(),
+    trio: [
+      { model: m0.model.trim(), messages: m0.messages },
+      { model: m1.model.trim(), messages: m1.messages },
+      { model: m2.model.trim(), messages: m2.messages },
+    ] as const,
   });
 };
 
@@ -128,8 +107,8 @@ const validateRequest = (
   }
 
   // Validate model based on type
-  if (isEnsembleModel(request.model)) {
-    return Effect.map(validateEnsembleModel(request.model), (validModel) => ({
+  if (isTrioModel(request.model)) {
+    return Effect.map(validateTrioModel(request.model), (validModel) => ({
       ...request,
       model: validModel,
     }));
@@ -164,10 +143,10 @@ export const sendChatCompletion = (
         // Collect headers (immutably)
         const headers: Record<string, string> = Object.fromEntries(response.headers.entries());
 
-        // Parse voting details from header
-        const votingDetailsHeader = response.headers.get('X-Trio-Details');
-        const votingDetails: VotingDetails | null = votingDetailsHeader
-          ? ((parseJsonSafe(votingDetailsHeader) as VotingDetails | undefined) ?? null)
+        // Parse trio details from header
+        const trioDetailsHeader = response.headers.get('X-Trio-Details');
+        const trioDetails: TrioDetails | null = trioDetailsHeader
+          ? ((parseJsonSafe(trioDetailsHeader) as TrioDetails | undefined) ?? null)
           : null;
 
         if (!response.ok) {
@@ -178,7 +157,7 @@ export const sendChatCompletion = (
         }
 
         const data = (await response.json()) as ChatCompletionResponse;
-        return { data, votingDetails, headers };
+        return { data, trioDetails, headers };
       },
       catch: (error) => {
         if (error instanceof ApiError) {

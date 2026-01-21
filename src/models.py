@@ -1,13 +1,15 @@
 """Pydantic models for OpenAI-compatible API."""
 
+from __future__ import annotations
+
 import time
 import uuid
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, Union
 
 from pydantic import BaseModel, Field, field_validator
 
-# Valid aggregation methods for ensemble response selection
-AggregationMethod = Literal["acceptance_voting", "random", "judge", "synthesize", "concat"]
+if TYPE_CHECKING:
+    pass
 
 
 class ChatMessage(BaseModel):
@@ -17,58 +19,52 @@ class ChatMessage(BaseModel):
     content: str
 
 
-class EnsembleModel(BaseModel):
-    """Ensemble definition - the ensemble IS the model.
-
-    Defines a set of models to query in parallel with an aggregation method
-    to select or synthesize the final response.
-    """
-
-    ensemble: list["EnsembleMember"]
-    aggregation_method: AggregationMethod
-    judge_model: str | None = None
-    synthesize_model: str | None = None
-
-    @field_validator("ensemble")
-    @classmethod
-    def ensemble_not_empty(cls, v: list["EnsembleMember"]) -> list["EnsembleMember"]:
-        """Validate that ensemble has at least one member."""
-        if len(v) == 0:
-            raise ValueError("Ensemble must contain at least one member")
-        return v
-
-
-class EnsembleMember(BaseModel):
-    """A model in the ensemble with optional custom system prompt.
+class TrioMember(BaseModel):
+    """A model in the trio with optional custom messages.
 
     The model can be either a string (backend model name) or a nested
-    EnsembleModel for recursive composition.
+    TrioModel for recursive composition.
     """
 
-    model: str | EnsembleModel
-    system_prompt: str | None = None
+    model: Union[str, TrioModel]
+    messages: list[ChatMessage] | None = None
 
     @field_validator("model")
     @classmethod
-    def model_not_empty(cls, v: str | EnsembleModel) -> str | EnsembleModel:
+    def model_not_empty(cls, v: Union[str, TrioModel]) -> Union[str, TrioModel]:
         """Validate that model name is not empty."""
         if isinstance(v, str) and not v.strip():
             raise ValueError("Model name cannot be empty")
         return v
 
 
+class TrioModel(BaseModel):
+    """Trio definition - three models that synthesize perspectives.
+
+    Models A and B generate responses independently in parallel,
+    then model C synthesizes them into a final response.
+    """
+
+    trio: list[TrioMember]
+
+    @field_validator("trio")
+    @classmethod
+    def trio_must_have_three_members(cls, v: list[TrioMember]) -> list[TrioMember]:
+        """Validate that trio has exactly three members."""
+        if len(v) != 3:
+            raise ValueError("Trio must contain exactly three members")
+        return v
+
+
 # Rebuild models to resolve forward references
-EnsembleModel.model_rebuild()
+TrioMember.model_rebuild()
+TrioModel.model_rebuild()
 
 
 class ChatCompletionRequest(BaseModel):
-    """Request body for /v1/chat/completions endpoint.
+    """Request body for /v1/chat/completions endpoint."""
 
-    Note: Some OpenAI parameters (top_p, n, stop, presence_penalty, frequency_penalty,
-    user) are not supported as they don't apply to ensemble voting.
-    """
-
-    model: str | EnsembleModel
+    model: Union[str, TrioModel]
     messages: list[ChatMessage]
     max_tokens: int = 500
     temperature: float = 0.7
@@ -76,7 +72,7 @@ class ChatCompletionRequest(BaseModel):
 
     @field_validator("model")
     @classmethod
-    def model_not_empty(cls, v: str | EnsembleModel) -> str | EnsembleModel:
+    def model_not_empty(cls, v: Union[str, TrioModel]) -> Union[str, TrioModel]:
         """Validate that model name is not empty."""
         if isinstance(v, str) and not v.strip():
             raise ValueError("Model name cannot be empty")
@@ -126,18 +122,11 @@ class ModelListResponse(BaseModel):
     data: list[ModelInfo]
 
 
-class Candidate(BaseModel):
-    """A candidate response from a model with voting results."""
+class TrioDetails(BaseModel):
+    """Detailed trio execution information returned in X-Trio-Details header."""
 
-    model: str
-    response: str
-    accepted: int = 0
-    preferred: int = 0
-
-
-class VotingDetails(BaseModel):
-    """Detailed voting information returned in X-Trio-Details header."""
-
-    winner_index: int
-    candidates: list[Candidate]
-    aggregation_method: AggregationMethod | Literal["none"] = "acceptance_voting"
+    response_a: str
+    response_b: str
+    model_a: str
+    model_b: str
+    model_c: str

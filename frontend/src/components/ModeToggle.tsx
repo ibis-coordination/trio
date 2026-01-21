@@ -22,11 +22,11 @@ export function ModeToggle({ mode, onModeChange }: ModeToggleProps) {
         <input
           type="radio"
           name="mode"
-          value="ensemble"
-          checked={mode === 'ensemble'}
-          onChange={() => { onModeChange('ensemble'); }}
+          value="trio"
+          checked={mode === 'trio'}
+          onChange={() => { onModeChange('trio'); }}
         />
-        <span>Ensemble</span>
+        <span>Trio</span>
       </label>
     </div>
   );

@@ -4,26 +4,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Trio is an AI ensemble system that sends prompts to multiple LLMs in parallel, then selects the best response through voting. It exposes an OpenAI-compatible API, so clients interact with the ensemble as if it were a single model.
+Trio is an AI model composition framework that creates new models out of three base models. Models A and B generate responses independently in parallel, then model C synthesizes them into a final response. It exposes an OpenAI-compatible API, so clients interact with the trio as if it were a single model.
 
 ## Development Commands
 
-```bash
-# Install dependencies
-pip install -e ".[dev]"
+### Backend (Python)
 
-# Run locally (requires LiteLLM or other OpenAI-compatible backend)
-TRIO_BACKEND_URL=http://localhost:4000 uvicorn src.main:app --reload
+```bash
+# Install dependencies (use local .venv)
+.venv/bin/pip install -e ".[dev]"
+
+# Run locally (requires Ollama or other OpenAI-compatible backend)
+TRIO_BACKEND_URL=http://localhost:11434 .venv/bin/uvicorn src.main:app --reload
 
 # Run tests
-pytest
+.venv/bin/pytest
 
 # Run a single test
-pytest tests/test_voting.py::test_name
+.venv/bin/pytest tests/test_trio.py::TestClassName::test_name
 
 # Type checking
-mypy src/
+.venv/bin/mypy src/
 ```
+
+### Frontend (React + Effect + Vite)
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Run dev server (proxies API to backend on port 8000)
+npm run dev
+
+# Type checking
+npm run typecheck
+
+# Lint
+npm run lint
+
+# Build for production (outputs to ../static/)
+npm run build
+```
+
+**Note:** The frontend has no test script. Use `npm run typecheck` and `npm run lint` to verify changes.
 
 ## Running with Docker Compose
 
@@ -33,39 +58,93 @@ docker compose exec ollama ollama pull llama3.2:1b      # Pull a model
 curl http://localhost:8000/health                       # Verify it's running
 ```
 
+## Running Locally with Ollama
+
+```bash
+# Terminal 1: Start Ollama (if not already running)
+ollama serve
+
+# Terminal 2: Start backend
+TRIO_BACKEND_URL=http://localhost:11434 .venv/bin/uvicorn src.main:app --port 8000 --reload
+
+# Terminal 3: Start frontend dev server (optional, for hot reload)
+cd frontend && npm run dev
+```
+
+The backend serves static files from `static/` at the root URL, so you can access the UI at http://localhost:8000 after running `npm run build` in the frontend.
+
 ## Architecture
 
 The codebase follows a straightforward request flow:
 
-1. **main.py** - FastAPI app with `/v1/chat/completions` endpoint. Determines if request is ensemble mode (`model` is an `EnsembleModel` object) or pass-through mode (`model` is a string)
+1. **main.py** - FastAPI app with `/v1/chat/completions` endpoint. Determines if request is trio mode (`model` is a `TrioModel` object) or pass-through mode (`model` is a string)
 
-2. **voting.py** - Orchestrates the ensemble pipeline:
-   - `_generate_single_response()` - Handles both simple models and nested ensembles recursively
-   - `generate_responses()` - Fans out to N models in parallel via asyncio.gather
-   - `voting_completion()` - Main entry point that handles single-model passthrough, parallel generation, and aggregation dispatch
+2. **trio_engine.py** - Orchestrates the trio pipeline:
+   - `_generate_member_response()` - Handles both simple models and nested trios recursively
+   - `_synthesize()` - Calls model C to synthesize A and B's responses
+   - `trio_completion()` - Main entry point that generates A and B in parallel, then synthesizes with C
 
-3. **aggregation.py** - Four methods for selecting the winner:
-   - `acceptance_voting`: Each model votes ACCEPTED/PREFERRED on all responses
-   - `random`: Random selection
-   - `judge`: Separate judge model picks best response
-   - `synthesize`: Separate model synthesizes all responses into one
+3. **llm.py** - HTTP client for backend LLM calls (LiteLLM/Ollama/OpenAI)
 
-4. **llm.py** - HTTP client for backend LLM calls (LiteLLM/Ollama/OpenAI)
+4. **models.py** - Pydantic models for OpenAI-compatible request/response format
+   - `TrioModel`: Defines a trio with exactly 3 members
+   - `TrioMember`: A model (string or nested `TrioModel`) with optional messages
+   - `ChatCompletionRequest.model`: Accepts `str | TrioModel`
 
-5. **models.py** - Pydantic models for OpenAI-compatible request/response format
-   - `EnsembleModel`: Defines an ensemble with members and aggregation method
-   - `EnsembleMember`: A model (string or nested `EnsembleModel`) with optional system prompt
-   - `ChatCompletionRequest.model`: Accepts `str | EnsembleModel`
-
-6. **config.py** - Environment-based settings via pydantic-settings (`TRIO_BACKEND_URL`, `TRIO_PORT`, `TRIO_TIMEOUT`)
+5. **config.py** - Environment-based settings via pydantic-settings (`TRIO_BACKEND_URL`, `TRIO_PORT`, `TRIO_TIMEOUT`)
 
 ## Key Design Patterns
 
-- **Pass-through mode**: String model names bypass voting and forward directly to backend
-- **Ensemble as model**: The `model` param accepts an object defining the full ensemble configuration
-- **Recursive composition**: `EnsembleMember.model` can be a nested `EnsembleModel` for hierarchical ensembles
-- **Explicit configuration**: No defaults for ensemble or aggregation method - requests must be explicit
-- **Voting details**: Returned in `X-Trio-Details` response header for debugging/transparency
+- **Pass-through mode**: String model names forward directly to backend
+- **Trio as model**: The `model` param accepts an object defining the trio configuration
+- **Recursive composition**: `TrioMember.model` can be a nested `TrioModel` for hierarchical trios
+- **Message merging**: Each member's `messages` are prepended to the request's `messages`
+- **Trio details**: Returned in `X-Trio-Details` response header for debugging/transparency
+
+## API Example
+
+```json
+{
+  "model": {
+    "trio": [
+      {"model": "model-a", "messages": [{"role": "system", "content": "Be concise"}]},
+      {"model": "model-b", "messages": [{"role": "system", "content": "Be detailed"}]},
+      {"model": "model-c"}
+    ]
+  },
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+```
+
+## Frontend Architecture
+
+The frontend is a React app in `frontend/` using Effect for functional error handling.
+
+### Key Files
+
+- **types/index.ts** - Shared TypeScript types (`TrioModel`, `TrioMember`, `TrioDetails`, etc.)
+- **services/api.ts** - Effect-based API client with validation
+- **App.tsx** - Main app state and message handling
+- **components/** - UI components
+
+### Component Structure
+
+| Component | Purpose |
+|-----------|---------|
+| `ModelConfigPanel` | Container for mode toggle and config |
+| `ModeToggle` | Switch between "Simple" and "Trio" modes |
+| `TrioConfig` | Trio member configuration container |
+| `TrioMemberList` | Fixed 3-member list (A, B, C) |
+| `TrioMemberRow` | Single member with model input and optional system prompt |
+| `TrioDetailsPanel` | Expandable panel showing A/B responses after synthesis |
+| `ChatPanel` | Message list and input |
+| `MessageBubble` | Individual message with metadata |
+
+### Type Conventions
+
+- All interface properties use `readonly` modifier
+- Trio members use tuple type: `readonly [TrioMember, TrioMember, TrioMember]`
+- Use `as const` for literal tuple assertions
 
 ## Release Process
 

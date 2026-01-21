@@ -1,4 +1,4 @@
-"""FastAPI application for Trio voting ensemble service."""
+"""FastAPI application for Trio three-model synthesis service."""
 
 import json
 import logging
@@ -9,18 +9,19 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .config import get_settings, get_trio_models
+from .config import get_settings
+from .llm import LLMError, fetch_completion
 from .models import (
     ChatCompletionChoice,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatMessage,
-    EnsembleMember,
-    EnsembleModel,
     ModelInfo,
     ModelListResponse,
+    TrioDetails,
+    TrioModel,
 )
-from .voting import voting_completion
+from .trio_engine import TrioError, trio_completion
 
 # Configure logging
 logging.basicConfig(
@@ -32,13 +33,9 @@ logger = logging.getLogger(__name__)
 # Model identifier with version for API responses
 MODEL_ID = "trio-1.0"
 
-# Maximum number of models allowed in a single ensemble request
-# Based on research suggesting 3-7 is optimal; 9 allows for 3x3 hierarchical setups
-MAX_ENSEMBLE_SIZE = 9
-
 app = FastAPI(
     title="Trio",
-    description="OpenAI-compatible voting ensemble service",
+    description="OpenAI-compatible three-model synthesis service",
     version="0.1.0",
 )
 
@@ -70,17 +67,16 @@ async def list_models() -> ModelListResponse:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, response: Response) -> ChatCompletionResponse:
-    """Create a chat completion using voting ensemble (OpenAI-compatible).
+    """Create a chat completion using trio synthesis (OpenAI-compatible).
 
     This endpoint is compatible with the OpenAI chat completions API.
 
-    If model is an EnsembleModel object, generates responses from multiple models,
-    runs the specified aggregation method, and returns the winning response.
+    If model is a TrioModel object (with a 'trio' array of 3 members), models A and B
+    generate responses in parallel, then model C synthesizes them into a final response.
 
-    If model is a string, passes through directly to that model via the backend
-    without ensemble voting.
+    If model is a string, passes through directly to that model via the backend.
 
-    Voting details are included in the X-Trio-Details response header.
+    Trio details are included in the X-Trio-Details response header.
     """
     # Streaming is not supported
     if request.stream:
@@ -88,86 +84,73 @@ async def chat_completions(request: ChatCompletionRequest, response: Response) -
 
     settings = get_settings()
 
-    # Resolve trio model references (e.g., "trio:perspectives")
-    if isinstance(request.model, str) and request.model.startswith("trio:"):
-        model_name = request.model[5:]
-        trio_models = get_trio_models()
-        if model_name not in trio_models:
-            raise HTTPException(status_code=404, detail=f"Trio model '{model_name}' not found")
-        request.model = EnsembleModel(**trio_models[model_name])
-
-    # Determine if this is an ensemble request or pass-through
-    if isinstance(request.model, EnsembleModel):
-        # Ensemble mode: extract config from model object
-        ensemble = request.model.ensemble
-        aggregation_method = request.model.aggregation_method
-        judge_model = request.model.judge_model
-        synthesize_model = request.model.synthesize_model
-        response_model = MODEL_ID
-    else:
-        # Pass-through mode: forward directly to the specified model
-        ensemble = [EnsembleMember(model=request.model)]
-        aggregation_method = "random"  # Single model, aggregation is irrelevant
-        judge_model = None
-        synthesize_model = None
-        response_model = request.model
-
-    # Validate ensemble size
-    if len(ensemble) > MAX_ENSEMBLE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Ensemble size {len(ensemble)} exceeds maximum of {MAX_ENSEMBLE_SIZE} models",
-        )
-
-    # Validate judge method has a judge_model
-    if aggregation_method == "judge" and not judge_model:
-        raise HTTPException(
-            status_code=400,
-            detail="judge_model is required when using 'judge' aggregation method",
-        )
-
-    # Validate synthesize method has a synthesize_model
-    if aggregation_method == "synthesize" and not synthesize_model:
-        raise HTTPException(
-            status_code=400,
-            detail="synthesize_model is required when using 'synthesize' aggregation method",
-        )
-
-    logger.info(
-        f"Chat completion request: {len(request.messages)} messages, "
-        f"ensemble size: {len(ensemble)}, aggregation: {aggregation_method}"
-    )
-
     # Use httpx client with timeout
     async with httpx.AsyncClient(timeout=settings.trio_timeout) as client:
-        winner_response, voting_details = await voting_completion(
-            client,
-            settings,
-            request.messages,
-            ensemble,
-            request.max_tokens,
-            request.temperature,
-            aggregation_method,
-            judge_model,
-            synthesize_model,
-        )
+        if isinstance(request.model, TrioModel):
+            # Trio mode: A and B generate in parallel, C synthesizes
+            logger.info(
+                f"Trio request: {len(request.messages)} messages, "
+                f"models: {_get_model_names(request.model)}"
+            )
+
+            try:
+                final_response, trio_details = await trio_completion(
+                    client,
+                    settings,
+                    request.model,
+                    request.messages,
+                    request.max_tokens,
+                    request.temperature,
+                )
+            except TrioError as e:
+                # Propagate trio errors with appropriate status code
+                status = e.status_code if e.status_code else 502
+                raise HTTPException(status_code=status, detail=e.message) from e
+            response_model = MODEL_ID
+
+            # Add trio details to custom header
+            response.headers["X-Trio-Details"] = json.dumps(trio_details.model_dump())
+        else:
+            # Pass-through mode: forward directly to the specified model
+            logger.info(f"Pass-through request to {request.model}: {len(request.messages)} messages")
+
+            try:
+                final_response = await fetch_completion(
+                    client,
+                    settings.trio_backend_url,
+                    request.model,
+                    request.messages,
+                    request.max_tokens,
+                    request.temperature,
+                )
+            except LLMError as e:
+                # Propagate backend errors with appropriate status code
+                status = e.status_code if e.status_code else 502
+                raise HTTPException(status_code=status, detail=e.message) from e
+            response_model = request.model
 
     # Build OpenAI-compatible response
-    completion_response = ChatCompletionResponse(
+    return ChatCompletionResponse(
         model=response_model,
         choices=[
             ChatCompletionChoice(
                 index=0,
-                message=ChatMessage(role="assistant", content=winner_response),
+                message=ChatMessage(role="assistant", content=final_response),
                 finish_reason="stop",
             )
         ],
     )
 
-    # Add voting details to custom header
-    response.headers["X-Trio-Details"] = json.dumps(voting_details.model_dump())
 
-    return completion_response
+def _get_model_names(trio: TrioModel) -> str:
+    """Get a string representation of the trio model names for logging."""
+    names = []
+    for member in trio.trio:
+        if isinstance(member.model, TrioModel):
+            names.append("trio")
+        else:
+            names.append(member.model)
+    return f"[{', '.join(names)}]"
 
 
 # Serve static frontend files at /chat/

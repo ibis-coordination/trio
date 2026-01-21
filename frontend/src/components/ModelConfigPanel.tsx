@@ -1,15 +1,15 @@
-import type { ConfigMode, EnsembleModel } from '../types';
+import type { ConfigMode, TrioModel } from '../types';
 import { ValidationError } from './ValidationError';
 import { ModeToggle } from './ModeToggle';
-import { EnsembleConfig } from './EnsembleConfig';
+import { TrioConfig } from './TrioConfig';
 
 interface ModelConfigPanelProps {
   readonly mode: ConfigMode;
   readonly onModeChange: (mode: ConfigMode) => void;
   readonly model: string;
   readonly onModelChange: (model: string) => void;
-  readonly ensembleConfig: EnsembleModel;
-  readonly onEnsembleConfigChange: (config: EnsembleModel) => void;
+  readonly trioConfig: TrioModel;
+  readonly onTrioConfigChange: (config: TrioModel) => void;
   readonly validationError: string | null;
 }
 
@@ -18,8 +18,8 @@ export function ModelConfigPanel({
   onModeChange,
   model,
   onModelChange,
-  ensembleConfig,
-  onEnsembleConfigChange,
+  trioConfig,
+  onTrioConfigChange,
   validationError,
 }: ModelConfigPanelProps) {
   return (
@@ -43,9 +43,9 @@ export function ModelConfigPanel({
           {validationError && <ValidationError message={validationError} />}
         </div>
       ) : (
-        <EnsembleConfig
-          config={ensembleConfig}
-          onConfigChange={onEnsembleConfigChange}
+        <TrioConfig
+          config={trioConfig}
+          onConfigChange={onTrioConfigChange}
           validationError={validationError}
         />
       )}

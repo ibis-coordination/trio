@@ -2,24 +2,24 @@
  * Shared TypeScript types for the Trio Chat UI
  */
 
-// Aggregation methods supported by Trio
-export type AggregationMethod = 'acceptance_voting' | 'random' | 'judge' | 'synthesize' | 'concat';
-
 // Configuration mode
-export type ConfigMode = 'simple' | 'ensemble';
+export type ConfigMode = 'simple' | 'trio';
 
-// Ensemble member (model + optional system prompt)
-export interface EnsembleMember {
-  readonly model: string;
-  readonly system_prompt?: string;
+// API message format (for trio member messages)
+export interface ApiMessage {
+  readonly role: 'user' | 'assistant' | 'system';
+  readonly content: string;
 }
 
-// Ensemble model configuration
-export interface EnsembleModel {
-  readonly ensemble: readonly EnsembleMember[];
-  readonly aggregation_method: AggregationMethod;
-  readonly judge_model?: string;
-  readonly synthesize_model?: string;
+// Trio member (model + optional messages for variance vectors)
+export interface TrioMember {
+  readonly model: string;
+  readonly messages?: readonly ApiMessage[];
+}
+
+// Trio model configuration - exactly 3 members (A, B, C)
+export interface TrioModel {
+  readonly trio: readonly [TrioMember, TrioMember, TrioMember];
 }
 
 export interface ChatMessage {
@@ -37,27 +37,21 @@ export interface ResponseMetadata {
   readonly completionTokens?: number;
   readonly totalTokens?: number;
   readonly durationMs?: number;
-  readonly votingDetails?: VotingDetails;
+  readonly trioDetails?: TrioDetails;
 }
 
-export interface VotingDetails {
-  readonly aggregation_method: string;
-  readonly candidates: readonly Candidate[];
-  readonly winner_index: number;
-}
-
-export interface Candidate {
-  readonly model: string;
-  readonly response: string;
-  readonly votes?: {
-    readonly accepted: number;
-    readonly preferred: number;
-  };
+// Trio execution details from X-Trio-Details header
+export interface TrioDetails {
+  readonly response_a: string;
+  readonly response_b: string;
+  readonly model_a: string;
+  readonly model_b: string;
+  readonly model_c: string;
 }
 
 // API types
 export interface ChatCompletionRequest {
-  readonly model: string | EnsembleModel;
+  readonly model: string | TrioModel;
   readonly messages: ReadonlyArray<{
     readonly role: 'user' | 'assistant' | 'system';
     readonly content: string;

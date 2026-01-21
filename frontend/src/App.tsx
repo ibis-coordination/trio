@@ -6,24 +6,27 @@ import type {
   DebugInfo,
   ChatCompletionRequest,
   ConfigMode,
-  EnsembleModel,
+  TrioModel,
 } from './types';
 import { sendChatCompletion, toAppError, ValidationError } from './services/api';
 import { ModelConfigPanel } from './components/ModelConfigPanel';
 import { ChatPanel } from './components/ChatPanel';
 import { DebugPanel } from './components/DebugPanel';
 
-// Default ensemble configuration
-const DEFAULT_ENSEMBLE_CONFIG: EnsembleModel = {
-  ensemble: [{ model: '' }],
-  aggregation_method: 'acceptance_voting',
+// Default trio configuration - 3 members (A, B, C)
+const DEFAULT_TRIO_CONFIG: TrioModel = {
+  trio: [
+    { model: '' },
+    { model: '' },
+    { model: '' },
+  ],
 };
 
 export function App() {
   // Model configuration state
   const [mode, setMode] = useState<ConfigMode>('simple');
   const [model, setModel] = useState('llama3.2:1b');
-  const [ensembleConfig, setEnsembleConfig] = useState<EnsembleModel>(DEFAULT_ENSEMBLE_CONFIG);
+  const [trioConfig, setTrioConfig] = useState<TrioModel>(DEFAULT_TRIO_CONFIG);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Chat state
@@ -55,9 +58,9 @@ export function App() {
     setValidationError(null);
   }, []);
 
-  // Clear validation error when ensemble config changes
-  const handleEnsembleConfigChange = useCallback((newConfig: EnsembleModel) => {
-    setEnsembleConfig(newConfig);
+  // Clear validation error when trio config changes
+  const handleTrioConfigChange = useCallback((newConfig: TrioModel) => {
+    setTrioConfig(newConfig);
     setValidationError(null);
   }, []);
 
@@ -75,7 +78,7 @@ export function App() {
 
       // Build request based on mode
       const request: ChatCompletionRequest = {
-        model: mode === 'simple' ? model : ensembleConfig,
+        model: mode === 'simple' ? model : trioConfig,
         messages: requestMessages,
       };
 
@@ -120,7 +123,7 @@ export function App() {
         return;
       }
 
-      const { data, votingDetails, headers } = result.right;
+      const { data, trioDetails, headers } = result.right;
 
       // Update debug info
       setDebugInfo((prev) => ({
@@ -129,7 +132,7 @@ export function App() {
         lastHeaders: headers,
       }));
 
-      // Add assistant message with voting details if available
+      // Add assistant message with trio details if available
       const assistantMessage: ChatMessage = {
         id: `assistant-${String(Date.now())}`,
         role: 'assistant',
@@ -141,12 +144,12 @@ export function App() {
           promptTokens: data.usage?.prompt_tokens,
           completionTokens: data.usage?.completion_tokens,
           totalTokens: data.usage?.total_tokens,
-          votingDetails: votingDetails || undefined,
+          trioDetails: trioDetails || undefined,
         },
       };
       setMessages((prev) => [...prev, assistantMessage]);
     },
-    [mode, model, ensembleConfig]
+    [mode, model, trioConfig]
   );
 
   // Clear chat handler
@@ -178,8 +181,8 @@ export function App() {
           onModeChange={handleModeChange}
           model={model}
           onModelChange={handleModelChange}
-          ensembleConfig={ensembleConfig}
-          onEnsembleConfigChange={handleEnsembleConfigChange}
+          trioConfig={trioConfig}
+          onTrioConfigChange={handleTrioConfigChange}
           validationError={validationError}
         />
 

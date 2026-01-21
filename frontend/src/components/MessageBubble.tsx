@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../types';
-import { VotingDetailsPanel } from './VotingDetailsPanel';
+import { TrioDetailsPanel } from './TrioDetailsPanel';
 
 interface MessageBubbleProps {
   readonly message: ChatMessage;
@@ -32,8 +32,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           )}
         </div>
       )}
-      {message.metadata?.votingDetails && (
-        <VotingDetailsPanel details={message.metadata.votingDetails} />
+      {message.metadata?.trioDetails && (
+        <TrioDetailsPanel details={message.metadata.trioDetails} />
       )}
     </div>
   );
