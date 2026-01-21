@@ -80,8 +80,9 @@ The codebase follows a straightforward request flow:
 1. **main.py** - FastAPI app with `/v1/chat/completions` endpoint. Determines if request is trio mode (`model` is a `TrioModel` object) or pass-through mode (`model` is a string)
 
 2. **trio_engine.py** - Orchestrates the trio pipeline:
-   - `_generate_member_response()` - Handles both simple models and nested trios recursively
-   - `_synthesize()` - Calls model C to synthesize A and B's responses
+   - `_extract_host_system_prompt()` - Separates host system prompt from chat history
+   - `_generate_member_response()` - Handles both simple models and nested trios using host-aware tool pattern
+   - `_synthesize()` - Calls model C to synthesize A and B's responses using tool messages
    - `trio_completion()` - Main entry point that generates A and B in parallel, then synthesizes with C
 
 3. **llm.py** - HTTP client for backend LLM calls (LiteLLM/Ollama/OpenAI)
@@ -90,6 +91,7 @@ The codebase follows a straightforward request flow:
    - `TrioModel`: Defines a trio with exactly 3 members
    - `TrioMember`: A model (string or nested `TrioModel`) with optional messages
    - `ChatCompletionRequest.model`: Accepts `str | TrioModel`
+   - `ToolCall`, `ToolCallFunction`: Support for tool call messages
 
 5. **config.py** - Environment-based settings via pydantic-settings (`TRIO_BACKEND_URL`, `TRIO_PORT`, `TRIO_TIMEOUT`)
 
@@ -98,8 +100,41 @@ The codebase follows a straightforward request flow:
 - **Pass-through mode**: String model names forward directly to backend
 - **Trio as model**: The `model` param accepts an object defining the trio configuration
 - **Recursive composition**: `TrioMember.model` can be a nested `TrioModel` for hierarchical trios
-- **Message merging**: Each member's `messages` are prepended to the request's `messages`
+- **Host-aware tool pattern**: Models receive context through simulated tool calls (see below)
 - **Trio details**: Returned in `X-Trio-Details` response header for debugging/transparency
+
+## Host-Aware Tool Pattern
+
+All trio models understand they're part of a larger system ("Trio") serving a "host application". Context is provided through tool messages to clearly separate layers:
+
+- **Trio layer**: System prompt explaining the model's role in Trio
+- **Host layer**: The host application's system prompt (via `get_host_system_prompt` tool)
+- **User layer**: Normal chat messages
+
+### Message Flow for Models A and B
+
+```
+1. system: "You are an assistant within an AI system called Trio..."
+2. [member's custom messages, if any]
+3. assistant: {tool_calls: [{name: "get_host_system_prompt"}]}
+4. tool: "[host system prompt from request]"
+5. [chat history: user/assistant messages]
+```
+
+### Message Flow for Model C (Synthesizer)
+
+```
+1. system: "You are an assistant within an AI system called Trio..."
+2. [member's custom messages, if any]
+3. assistant: {tool_calls: [{name: "get_host_system_prompt"}]}
+4. tool: "[host system prompt from request]"
+5. [chat history up to final user message]
+6. user: [final user message]
+7. assistant: {tool_calls: [{name: "get_drafts"}]}
+8. tool: "Draft 1:\n{response_a}\n\nDraft 2:\n{response_b}"
+```
+
+This pattern allows models to understand their role in the system while keeping the host's instructions and draft responses clearly scoped.
 
 ## API Example
 

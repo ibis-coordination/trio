@@ -12,11 +12,28 @@ if TYPE_CHECKING:
     pass
 
 
+class ToolCallFunction(BaseModel):
+    """Function details for a tool call."""
+
+    name: str
+    arguments: str = ""
+
+
+class ToolCall(BaseModel):
+    """A tool call requested by the assistant."""
+
+    id: str
+    type: Literal["function"] = "function"
+    function: ToolCallFunction
+
+
 class ChatMessage(BaseModel):
     """A single message in the chat conversation."""
 
-    role: Literal["system", "user", "assistant"]
-    content: str
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None  # For assistant messages requesting tools
+    tool_call_id: str | None = None  # For tool messages responding to a call
 
 
 class TrioMember(BaseModel):

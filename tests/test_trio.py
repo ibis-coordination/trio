@@ -162,7 +162,7 @@ class TestMessageMerging:
     async def test_member_messages_prepended(
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
-        """Member messages are prepended to request messages."""
+        """Member messages are included after Trio system prompt."""
         with patch("src.trio_engine.fetch_completion") as mock_fetch:
             mock_fetch.return_value = "Response"
 
@@ -182,25 +182,34 @@ class TestMessageMerging:
             await trio_completion(mock_client, settings, trio, messages)
 
             # Check the messages passed to model A
+            # Structure: system (trio), member messages, assistant (tool call),
+            #            tool (host prompt), user message
             call_args_a = mock_fetch.call_args_list[0]
             messages_a = call_args_a[0][3]  # 4th positional arg is messages
             assert messages_a[0].role == "system"
-            assert messages_a[0].content == "Be concise"
-            assert messages_a[1].role == "user"
-            assert messages_a[1].content == "Hello"
+            assert "Trio" in messages_a[0].content  # Trio system prompt
+            assert messages_a[1].role == "system"
+            assert messages_a[1].content == "Be concise"  # Member's custom message
+            assert messages_a[2].role == "assistant"
+            assert messages_a[2].tool_calls is not None
+            assert messages_a[3].role == "tool"
+            assert messages_a[4].role == "user"
+            assert messages_a[4].content == "Hello"
 
             # Check the messages passed to model B
             call_args_b = mock_fetch.call_args_list[1]
             messages_b = call_args_b[0][3]
             assert messages_b[0].role == "system"
-            assert messages_b[0].content == "Be detailed"
-            assert messages_b[1].role == "user"
-            assert messages_b[1].content == "Hello"
+            assert "Trio" in messages_b[0].content
+            assert messages_b[1].role == "system"
+            assert messages_b[1].content == "Be detailed"
+            assert messages_b[4].role == "user"
+            assert messages_b[4].content == "Hello"
 
     async def test_no_member_messages(
         self, mock_client: AsyncMock, settings: Settings
     ) -> None:
-        """Members without messages just get request messages."""
+        """Members without custom messages get host-aware pattern with user message."""
         with patch("src.trio_engine.fetch_completion") as mock_fetch:
             mock_fetch.return_value = "Response"
 
@@ -214,11 +223,17 @@ class TestMessageMerging:
             await trio_completion(mock_client, settings, trio, messages)
 
             # Check the messages passed to model A
+            # Structure: system (trio), assistant (tool call), tool (host prompt), user
             call_args_a = mock_fetch.call_args_list[0]
             messages_a = call_args_a[0][3]
-            assert len(messages_a) == 1
-            assert messages_a[0].role == "user"
-            assert messages_a[0].content == "Hello"
+            assert len(messages_a) == 4
+            assert messages_a[0].role == "system"
+            assert "Trio" in messages_a[0].content
+            assert messages_a[1].role == "assistant"
+            assert messages_a[1].tool_calls is not None
+            assert messages_a[2].role == "tool"
+            assert messages_a[3].role == "user"
+            assert messages_a[3].content == "Hello"
 
 
 class TestNestedTrio:

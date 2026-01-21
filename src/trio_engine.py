@@ -7,7 +7,7 @@ import httpx
 
 from .config import Settings
 from .llm import LLMError, fetch_completion
-from .models import ChatMessage, TrioDetails, TrioMember, TrioModel
+from .models import ChatMessage, ToolCall, ToolCallFunction, TrioDetails, TrioMember, TrioModel
 
 
 class TrioError(Exception):
@@ -21,6 +21,27 @@ class TrioError(Exception):
 logger = logging.getLogger(__name__)
 
 
+def _extract_host_system_prompt(messages: list[ChatMessage]) -> tuple[str, list[ChatMessage]]:
+    """Extract system prompt from messages, return (system_prompt, remaining_messages)."""
+    host_system_prompt = ""
+    remaining: list[ChatMessage] = []
+    for msg in messages:
+        if msg.role == "system":
+            host_system_prompt = msg.content or ""
+        else:
+            remaining.append(msg)
+    return host_system_prompt, remaining
+
+
+TRIO_SYSTEM_PROMPT_AB = """You are an assistant within an AI system called Trio that serves host applications. You have access to a get_host_system_prompt tool that provides guidance from the host application. Use it to understand how to respond, then respond to the user."""
+
+TRIO_SYSTEM_PROMPT_C = """You are an assistant within an AI system called Trio that serves host applications. You have access to:
+- get_host_system_prompt: Provides guidance from the host application
+- get_drafts: Provides draft responses from other assistants in the system
+
+Use these tools, then respond to the user. Incorporate the best elements from the drafts into your response. Do not mention the drafts or the tools."""
+
+
 async def _generate_member_response(
     client: httpx.AsyncClient,
     settings: Settings,
@@ -32,14 +53,40 @@ async def _generate_member_response(
     """Generate a response from a single trio member.
 
     Handles both simple models (strings) and nested trios (TrioModel).
-    Member messages are prepended to request messages.
+    Uses host-aware tool pattern to separate Trio, host, and user layers.
 
     Returns:
         Tuple of (model_name, response_text, error_message).
         response_text is None on failure, error_message is None on success.
     """
-    # Merge messages: member.messages + request_messages
-    merged_messages = list(member.messages or []) + list(request_messages)
+    # Extract host system prompt from request messages
+    host_system_prompt, chat_history = _extract_host_system_prompt(request_messages)
+
+    # Build message list with host-aware tool pattern
+    messages: list[ChatMessage] = []
+
+    # 1. Trio system prompt
+    messages.append(ChatMessage(role="system", content=TRIO_SYSTEM_PROMPT_AB))
+
+    # 2. Add member's custom messages (if any)
+    messages.extend(member.messages or [])
+
+    # 3. Assistant "calls" get_host_system_prompt tool
+    messages.append(ChatMessage(
+        role="assistant",
+        content=None,
+        tool_calls=[ToolCall(id="hsp", function=ToolCallFunction(name="get_host_system_prompt"))],
+    ))
+
+    # 4. Tool response with host system prompt
+    messages.append(ChatMessage(
+        role="tool",
+        tool_call_id="hsp",
+        content=host_system_prompt or "(No host system prompt provided)",
+    ))
+
+    # 5. Chat history (user/assistant messages)
+    messages.extend(chat_history)
 
     if isinstance(member.model, TrioModel):
         # Nested trio: recursively call trio_completion
@@ -48,7 +95,7 @@ async def _generate_member_response(
                 client,
                 settings,
                 member.model,
-                merged_messages,
+                messages,
                 max_tokens,
                 temperature,
             )
@@ -63,7 +110,7 @@ async def _generate_member_response(
                 client,
                 settings.trio_backend_url,
                 model_name,
-                merged_messages,
+                messages,
                 max_tokens,
                 temperature,
             )
@@ -85,58 +132,66 @@ async def _synthesize(
 ) -> str | None:
     """Synthesize two responses using model C.
 
-    Model C receives the original messages plus a synthesis prompt with A and B's responses.
+    Uses host-aware tool pattern with get_host_system_prompt and get_drafts tools.
 
     Returns:
         The synthesized response, or None on failure.
     """
-    # Extract the user's question from messages
-    question = ""
-    for msg in reversed(request_messages):
-        if msg.role == "user":
-            question = msg.content
-            break
+    # Extract host system prompt from request messages
+    host_system_prompt, chat_history = _extract_host_system_prompt(request_messages)
 
-    # Build the synthesis prompt
-    synthesize_prompt = f"""Two AI models were asked to respond to a user's request. Here are their responses:
+    # Build message list with host-aware tool pattern
+    messages: list[ChatMessage] = []
 
----
-Response A:
-{response_a}
+    # 1. Trio system prompt for model C
+    messages.append(ChatMessage(role="system", content=TRIO_SYSTEM_PROMPT_C))
 
----
-Response B:
-{response_b}
+    # 2. Add model_c's custom messages (if any)
+    messages.extend(model_c.messages or [])
 
----
+    # 3. Assistant "calls" get_host_system_prompt tool
+    messages.append(ChatMessage(
+        role="assistant",
+        content=None,
+        tool_calls=[ToolCall(id="hsp", function=ToolCallFunction(name="get_host_system_prompt"))],
+    ))
 
-Synthesize these two perspectives into a single, comprehensive response that:
-- Identifies what both responses agree on (invariance)
-- Incorporates unique insights from each perspective
-- Resolves any contradictions thoughtfully
-- Maintains a clear, coherent structure
+    # 4. Tool response with host system prompt
+    messages.append(ChatMessage(
+        role="tool",
+        tool_call_id="hsp",
+        content=host_system_prompt or "(No host system prompt provided)",
+    ))
 
-Provide only the synthesized response, no preamble or explanation."""
+    # 5. Chat history EXCEPT final user message
+    if chat_history:
+        messages.extend(chat_history[:-1])
 
-    # Merge messages: model_c.messages + [user's original context, synthesis prompt]
-    merged_messages = list(model_c.messages or [])
+    # 6. Final user message
+    if chat_history:
+        messages.append(chat_history[-1])
 
-    # Add the original conversation context (excluding the last user message which we're replacing)
-    for msg in request_messages:
-        if msg.role != "user" or msg.content != question:
-            merged_messages.append(msg)
+    # 7. Assistant "calls" get_drafts tool
+    messages.append(ChatMessage(
+        role="assistant",
+        content=None,
+        tool_calls=[ToolCall(id="drafts", function=ToolCallFunction(name="get_drafts"))],
+    ))
 
-    # Add the synthesis prompt as the user message
-    merged_messages.append(ChatMessage(role="user", content=synthesize_prompt))
+    # 8. Tool response with A and B's responses
+    messages.append(ChatMessage(
+        role="tool",
+        tool_call_id="drafts",
+        content=f"Draft 1:\n{response_a}\n\nDraft 2:\n{response_b}",
+    ))
 
     try:
         if isinstance(model_c.model, TrioModel):
-            # Nested trio for synthesis
             response, _ = await trio_completion(
                 client,
                 settings,
                 model_c.model,
-                merged_messages,
+                messages,
                 max_tokens,
                 temperature,
             )
@@ -146,7 +201,7 @@ Provide only the synthesized response, no preamble or explanation."""
                 client,
                 settings.trio_backend_url,
                 model_c.model,
-                merged_messages,
+                messages,
                 max_tokens,
                 temperature,
             )
